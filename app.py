@@ -33,6 +33,13 @@ st.markdown(
           box-shadow: 0 2px 10px rgba(0,0,0,0.04);
           margin-bottom: 15px;
       }
+      .alert-card {
+          background-color: #FEF3C7;
+          border-left: 5px solid #F59E0B;
+          padding: 15px;
+          border-radius: 8px;
+          margin-bottom: 20px;
+      }
       .kpi-title { font-size: 14px; opacity: .70; margin-bottom: 4px; font-weight: 500; }
       .kpi-value { font-size: 26px; font-weight: 800; color: #1f2937; }
       .stButton>button { width: 100%; height: 3.2em; border-radius: 12px; font-weight: 600; }
@@ -120,7 +127,8 @@ def load_data():
 
     df_o["Pago"] = df_o["Pago"].astype(str).str.strip().str.lower().isin(["true", "1", "yes", "sim"])
 
-    for col in ["Data_Visita", "Data_Orcamento", "Data_Conclusao"]:
+    # Garante que Data_Contato seja datetime
+    for col in ["Data_Visita", "Data_Orcamento", "Data_Conclusao", "Data_Contato"]:
         df_o[col] = pd.to_datetime(df_o[col], errors="coerce").dt.date
 
     return df_c, df_o
@@ -137,7 +145,6 @@ def limpar_obras(df):
     df["Cliente"] = df["Cliente"].astype(str).replace("nan", "").fillna("").str.strip()
     df = df[df["Cliente"] != ""].reset_index(drop=True)
     
-    # Gera IDs sequenciais se faltar
     df["ID"] = pd.to_numeric(df["ID"], errors="coerce")
     if df["ID"].isna().any():
         max_id = 0
@@ -292,6 +299,8 @@ menu = st.sidebar.radio("Navegação", ["Dashboard", "Gestão de Obras", "Client
 
 if menu == "Dashboard":
     st.markdown("<div class='section-title'>Visão Geral</div>", unsafe_allow_html=True)
+    
+    # === KPI ===
     obras_ativas = 0
     valor_total = 0.0
     recebido_total = 0.0
@@ -305,6 +314,39 @@ if menu == "Dashboard":
     c2.markdown(f"<div class='card'><div class='kpi-title'>Clientes</div><div class='kpi-value'>{len(df_clientes)}</div></div>", unsafe_allow_html=True)
     c3.markdown(f"<div class='card'><div class='kpi-title'>Total Contratos</div><div class='kpi-value'>{br_money(valor_total)}</div></div>", unsafe_allow_html=True)
     c4.markdown(f"<div class='card'><div class='kpi-title'>Total Recebido</div><div class='kpi-value'>{br_money(recebido_total)}</div></div>", unsafe_allow_html=True)
+    
+    # === AGENDA DE CONTATOS (NOVO) ===
+    st.write("")
+    if not df_obras.empty:
+        hoje = datetime.now().date()
+        # Filtra quem tem data de contato definida e não está concluído/cancelado
+        df_contatos = df_obras[
+            (df_obras["Data_Contato"].notnull()) & 
+            (~df_obras["Status"].isin(["🟢 Concluído", "🔴 Cancelado"]))
+        ].copy()
+        
+        # Converte para comparar
+        df_contatos["Data_Contato_dt"] = pd.to_datetime(df_contatos["Data_Contato"], errors='coerce').dt.date
+        
+        # Filtra próximos 7 dias ou atrasados
+        pendentes = df_contatos[df_contatos["Data_Contato_dt"] <= hoje + timedelta(days=7)].sort_values("Data_Contato_dt")
+        
+        if not pendentes.empty:
+            st.markdown("<div class='alert-card'><h4>📞 Lembretes de Contato (Hoje e Próximos)</h4>", unsafe_allow_html=True)
+            for _, row in pendentes.iterrows():
+                d_cont = row["Data_Contato_dt"]
+                d_fmt = d_cont.strftime("%d/%m")
+                nome = row["Cliente"]
+                status = row["Status"]
+                
+                msg_pre = ""
+                if d_cont < hoje: msg_pre = "🔴 ATRASADO: "
+                elif d_cont == hoje: msg_pre = "🟡 HOJE: "
+                else: msg_pre = f"🔵 {d_fmt}: "
+                
+                st.markdown(f"**{msg_pre}** Entrar em contato com **{nome}** ({status})")
+            st.markdown("</div>", unsafe_allow_html=True)
+    
     st.write("")
     resumo = resumo_por_cliente(df_clientes, df_obras)
     if resumo.empty: st.info("Sem dados para exibir ainda.")
@@ -369,13 +411,15 @@ elif menu == "Importar/Exportar":
                     nova_obra = pd.DataFrame([{
                         "ID": novo_id_obra, "Cliente": imp_clean, "Status": "🟠 Orçamento Enviado",
                         "Data_Orcamento": imp_data, "Data_Visita": imp_data,
+                        # Define contato padrão para hoje+2 dias
+                        "Data_Contato": imp_data + timedelta(days=2),
                         "Total": imp_total, "Descricao": imp_desc,
                         "Custo_MO": imp_total, "Custo_Material": 0.0, "Entrada": 0.0, "Pago": False
                     }])
                     df_obras = pd.concat([df_obras, nova_obra], ignore_index=True)
                     df_obras = limpar_obras(df_obras)
                     save_data(df_clientes, df_obras)
-                    st.success("Importação concluída!")
+                    st.success("Importação concluída! Lembrete de contato criado para daqui a 2 dias.")
                     st.balloons()
                     del st.session_state["dados_pdf_cache"]
         else: st.error("Erro ao ler PDF.")
@@ -507,7 +551,8 @@ elif menu == "Gestão de Obras":
                     "ID": None, "Status": "🔵 Agendamento", "Descricao": "", 
                     "Custo_MO": 0.0, "Custo_Material": 0.0, "Entrada": 0.0, "Pago": False,
                     "Total": 0.0,
-                    "Data_Visita": datetime.now().date(), "Data_Orcamento": datetime.now().date()
+                    "Data_Visita": datetime.now().date(), "Data_Orcamento": datetime.now().date(),
+                    "Data_Contato": datetime.now().date()
                 }
 
                 if obra_selecionada != "Nova Obra":
@@ -539,9 +584,12 @@ elif menu == "Gestão de Obras":
                 with st.form("form_obra"):
                     status = st.selectbox("Status", ["🔵 Agendamento", "🟠 Orçamento Enviado", "🟤 Execução", "🟢 Concluído", "🔴 Cancelado"], index=["🔵 Agendamento", "🟠 Orçamento Enviado", "🟤 Execução", "🟢 Concluído", "🔴 Cancelado"].index(normalize_status(dados_obra["Status"])))
                     desc = st.text_area("Descrição", value=str(dados_obra["Descricao"]))
-                    c1, c2 = st.columns(2)
-                    d_visita = c1.date_input("Data Visita", value=pd.to_datetime(dados_obra["Data_Visita"]).date() if pd.notnull(dados_obra["Data_Visita"]) else datetime.now().date())
-                    d_orc = c2.date_input("Data Orçamento", value=pd.to_datetime(dados_obra["Data_Orcamento"]).date() if pd.notnull(dados_obra["Data_Orcamento"]) else datetime.now().date())
+                    
+                    # Datas de Acompanhamento
+                    c_date1, c_date2, c_date3 = st.columns(3)
+                    d_visita = c_date1.date_input("Data Visita", value=pd.to_datetime(dados_obra["Data_Visita"]).date() if pd.notnull(dados_obra["Data_Visita"]) else datetime.now().date())
+                    d_orc = c_date2.date_input("Data Orçamento", value=pd.to_datetime(dados_obra["Data_Orcamento"]).date() if pd.notnull(dados_obra["Data_Orcamento"]) else datetime.now().date())
+                    d_contato = c_date3.date_input("Próximo Contato/Ligar", value=pd.to_datetime(dados_obra.get("Data_Contato", datetime.now().date())).date())
                     
                     c3, c4, c5 = st.columns(3)
                     val_mo = float(dados_obra["Custo_MO"]); val_mat = float(dados_obra["Custo_Material"]); val_tot = float(dados_obra.get("Total", 0.0))
@@ -566,14 +614,15 @@ elif menu == "Gestão de Obras":
                         nova_linha = {
                             "ID": novo_id, "Cliente": cli_sel, "Status": status, "Descricao": desc,
                             "Custo_MO": mo, "Custo_Material": mat, "Total": total_calc,
-                            "Entrada": ent, "Pago": pago, "Data_Visita": d_visita, "Data_Orcamento": d_orc
+                            "Entrada": ent, "Pago": pago, 
+                            "Data_Visita": d_visita, "Data_Orcamento": d_orc, "Data_Contato": d_contato
                         }
                         for col in df_obras.columns:
                             if col not in nova_linha: nova_linha[col] = None
                             
                         df_obras = pd.concat([df_obras, pd.DataFrame([nova_linha])], ignore_index=True)
                         save_data(df_clientes, df_obras)
-                        st.success("Obra salva com sucesso!")
+                        st.success("Obra e Agenda salvos com sucesso!")
                         st.rerun()
             
             st.divider()
