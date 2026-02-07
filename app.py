@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, timedelta, time
+from datetime import datetime, timedelta, time as dtime
 from fpdf import FPDF
 import os
 import urllib.parse
@@ -44,9 +44,11 @@ def load_data():
         df_c = pd.read_csv(CLIENTES_FILE)
 
     if not os.path.exists(OBRAS_FILE):
-        cols = ["ID", "Cliente", "Status", "Data_Contato", "Data_Visita", "Data_Orcamento",
-                "Data_Aceite", "Data_Conclusao", "Custo_MO", "Custo_Material",
-                "Total", "Entrada", "Pago", "Descricao"]
+        cols = [
+            "ID", "Cliente", "Status",
+            "Data_Contato", "Data_Visita", "Data_Orcamento", "Data_Aceite", "Data_Conclusao",
+            "Custo_MO", "Custo_Material", "Total", "Entrada", "Pago", "Descricao"
+        ]
         df_o = pd.DataFrame(columns=cols)
         df_o.to_csv(OBRAS_FILE, index=False)
     else:
@@ -66,11 +68,18 @@ def load_data():
             if col in df_o.columns:
                 df_o[col] = pd.to_numeric(df_o[col], errors="coerce").fillna(0.0)
 
+        # garante colunas mínimas (caso CSV antigo)
+        for col in ["Descricao", "Entrada", "Pago"]:
+            if col not in df_o.columns:
+                df_o[col] = "" if col == "Descricao" else (0.0 if col == "Entrada" else False)
+
     return df_c, df_o
+
 
 def save_data(df_c, df_o):
     df_c.to_csv(CLIENTES_FILE, index=False)
     df_o.to_csv(OBRAS_FILE, index=False)
+
 
 df_clientes, df_obras = load_data()
 
@@ -86,10 +95,12 @@ def extrair_texto_pdf(pdf_file) -> str:
                 partes.append(t)
         return "\n".join(partes).strip()
 
+
 def brl_to_float(valor_txt: str) -> float:
     v = str(valor_txt).strip().replace("R$", "").strip()
     v = v.replace(".", "").replace(",", ".")
     return float(v)
+
 
 def normalizar_data_ddmmaa(data_txt: str) -> str:
     data_txt = str(data_txt).strip()
@@ -98,14 +109,16 @@ def normalizar_data_ddmmaa(data_txt: str) -> str:
             return datetime.strptime(data_txt, "%d/%m/%y").strftime("%d/%m/%Y")
         if re.search(r"\d{2}/\d{2}/\d{4}$", data_txt):
             return data_txt
-    except:
+    except Exception:
         pass
     return data_txt
+
 
 # =========================
 # RECONHECER PDF ANTIGO (Solução Reforma e Construção)
 # =========================
 def extrair_dados_pdf_solucao(text: str):
+    # garante que é orçamento
     if not re.search(r"ORÇAMENTO", text, flags=re.IGNORECASE):
         return None
 
@@ -123,30 +136,16 @@ def extrair_dados_pdf_solucao(text: str):
     if m:
         dados["Data"] = normalizar_data_ddmmaa(m.group(1))
 
+    # Total: R$ 3.467,00
     m = re.search(r"Total:\s*R\$\s*([\d\.\,]+)", text, flags=re.IGNORECASE)
     if m:
-        dados["TOTAL"] = brl_to_float(m.group(1))
+        try:
+            dados["TOTAL"] = brl_to_float(m.group(1))
+        except Exception:
+            pass
 
+    # Descrição: entre "Descrição:" e "Total:"
     m = re.search(r"Descrição:\s*(.*?)\s*Total:", text, flags=re.IGNORECASE | re.DOTALL)
     if m:
         desc = m.group(1).strip()
-        desc = re.sub(r"^\s*Valor:\s*$", "", desc, flags=re.IGNORECASE | re.MULTILINE).strip()
-        desc = re.sub(r"\n{3,}", "\n\n", desc)
-        dados["Serviço"] = desc
-
-    if not dados.get("Cliente") or not dados.get("TOTAL"):
-        return None
-
-    return dados
-
-# =========================
-# RECONHECER PDF (GERAL)
-# =========================
-def extrair_dados_pdf(pdf_file):
-    try:
-        text = extrair_texto_pdf(pdf_file)
-        if not text:
-            return None
-
-        # 1) tenta modelo antigo
-        dados_sol
+        # remove linha "V
