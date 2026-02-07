@@ -99,7 +99,7 @@ def load_data():
         cols_o = [
             "ID", "Cliente", "Status",
             "Data_Contato", "Data_Visita", "Data_Orcamento", "Data_Aceite", "Data_Conclusao",
-            "Custo_MO", "Custo_Material", "Total", "Entrada", "Pago", "Descricao"
+            "Custo_MO", "Custo_Material", "Total", "Entrada", "Pago", "Descricao", "Observacoes"
         ]
         df_o = pd.DataFrame(columns=cols_o)
         df_o.to_csv(OBRAS_FILE, index=False)
@@ -114,13 +114,14 @@ def load_data():
         "Data_Contato": None, "Data_Visita": None, "Data_Orcamento": None,
         "Data_Aceite": None, "Data_Conclusao": None,
         "Custo_MO": 0.0, "Custo_Material": 0.0, "Total": 0.0,
-        "Entrada": 0.0, "Pago": False, "Descricao": ""
+        "Entrada": 0.0, "Pago": False, "Descricao": "", "Observacoes": ""
     }
     df_o = ensure_cols(df_o, defaults_o)
 
     df_c["Nome"] = df_c["Nome"].astype(str).replace("nan", "").fillna("").str.strip()
     df_o["Cliente"] = df_o["Cliente"].astype(str).replace("nan", "").fillna("").str.strip()
     df_o["Status"] = df_o["Status"].apply(normalize_status)
+    df_o["Observacoes"] = df_o["Observacoes"].astype(str).replace("nan", "").fillna("")
     
     for col in ["Custo_MO", "Custo_Material", "Total", "Entrada"]:
         df_o[col] = pd.to_numeric(df_o[col], errors="coerce").fillna(0.0)
@@ -140,7 +141,7 @@ def save_data(df_c, df_o):
 def limpar_obras(df):
     if df is None or df.empty: return df
     df = df.copy()
-    cols_needed = {"ID": None, "Cliente": "", "Descricao": "", "Data_Orcamento": None, "Total": 0.0}
+    cols_needed = {"ID": None, "Cliente": "", "Descricao": "", "Data_Orcamento": None, "Total": 0.0, "Observacoes": ""}
     df = ensure_cols(df, cols_needed)
     df["Cliente"] = df["Cliente"].astype(str).replace("nan", "").fillna("").str.strip()
     df = df[df["Cliente"] != ""].reset_index(drop=True)
@@ -325,9 +326,6 @@ if menu == "Dashboard":
         ].copy()
         
         df_contatos["Data_Contato_dt"] = pd.to_datetime(df_contatos["Data_Contato"], errors='coerce').dt.date
-        
-        # Filtra próximos 7 dias ou atrasados
-        # Correção importante: remove NaT antes de filtrar
         df_contatos = df_contatos[df_contatos["Data_Contato_dt"].notna()]
         pendentes = df_contatos[df_contatos["Data_Contato_dt"] <= hoje + timedelta(days=7)].sort_values("Data_Contato_dt")
         
@@ -338,12 +336,10 @@ if menu == "Dashboard":
                 d_fmt = d_cont.strftime("%d/%m")
                 nome = row["Cliente"]
                 status = row["Status"]
-                
                 msg_pre = ""
                 if d_cont < hoje: msg_pre = "🔴 ATRASADO: "
                 elif d_cont == hoje: msg_pre = "🟡 HOJE: "
                 else: msg_pre = f"🔵 {d_fmt}: "
-                
                 st.markdown(f"**{msg_pre}** Entrar em contato com **{nome}** ({status})")
             st.markdown("</div>", unsafe_allow_html=True)
     
@@ -414,7 +410,8 @@ elif menu == "Importar/Exportar":
                         # Define contato padrão para hoje+2 dias
                         "Data_Contato": imp_data + timedelta(days=2),
                         "Total": imp_total, "Descricao": imp_desc,
-                        "Custo_MO": imp_total, "Custo_Material": 0.0, "Entrada": 0.0, "Pago": False
+                        "Custo_MO": imp_total, "Custo_Material": 0.0, "Entrada": 0.0, "Pago": False,
+                        "Observacoes": ""
                     }])
                     df_obras = pd.concat([df_obras, nova_obra], ignore_index=True)
                     df_obras = limpar_obras(df_obras)
@@ -548,7 +545,7 @@ elif menu == "Gestão de Obras":
                 obra_selecionada = st.selectbox("Selecione a obra para editar:", opcoes_obras, index=idx_selecao)
                 
                 dados_obra = {
-                    "ID": None, "Status": "🔵 Agendamento", "Descricao": "", 
+                    "ID": None, "Status": "🔵 Agendamento", "Descricao": "", "Observacoes": "",
                     "Custo_MO": 0.0, "Custo_Material": 0.0, "Entrada": 0.0, "Pago": False,
                     "Total": 0.0,
                     "Data_Visita": datetime.now().date(), "Data_Orcamento": datetime.now().date(),
@@ -591,10 +588,12 @@ elif menu == "Gestão de Obras":
                     status = st.selectbox("Status", ["🔵 Agendamento", "🟠 Orçamento Enviado", "🟤 Execução", "🟢 Concluído", "🔴 Cancelado"], index=["🔵 Agendamento", "🟠 Orçamento Enviado", "🟤 Execução", "🟢 Concluído", "🔴 Cancelado"].index(normalize_status(dados_obra["Status"])))
                     desc = st.text_area("Descrição", value=str(dados_obra["Descricao"]))
                     
+                    # NOVO CAMPO DE OBSERVAÇÕES
+                    obs_internas = st.text_area("Notas / Observações Internas", value=str(dados_obra.get("Observacoes", "")), placeholder="Ex: Cliente prefere contato após as 14h; Comprar cimento...")
+
                     # Datas de Acompanhamento (Tratamento seguro contra NaT)
                     c_date1, c_date2, c_date3 = st.columns(3)
                     
-                    # Funcao auxiliar para limpar datas
                     def clean_dt(val):
                         if pd.isnull(val): return datetime.now().date()
                         try: return pd.to_datetime(val).date()
@@ -626,6 +625,7 @@ elif menu == "Gestão de Obras":
                         
                         nova_linha = {
                             "ID": novo_id, "Cliente": cli_sel, "Status": status, "Descricao": desc,
+                            "Observacoes": obs_internas,
                             "Custo_MO": mo, "Custo_Material": mat, "Total": total_calc,
                             "Entrada": ent, "Pago": pago, 
                             "Data_Visita": d_visita, "Data_Orcamento": d_orc, "Data_Contato": d_contato
@@ -635,7 +635,7 @@ elif menu == "Gestão de Obras":
                             
                         df_obras = pd.concat([df_obras, pd.DataFrame([nova_linha])], ignore_index=True)
                         save_data(df_clientes, df_obras)
-                        st.success("Obra e Agenda salvos com sucesso!")
+                        st.success("Obra salva com sucesso!")
                         st.rerun()
             
             st.divider()
