@@ -5,6 +5,7 @@ import urllib.parse
 import pdfplumber
 import re
 import os
+from fpdf import FPDF  # Biblioteca para gerar o PDF
 
 # =========================
 # CONFIGURAÇÃO GERAL
@@ -128,7 +129,6 @@ def load_data():
 
     df_o["Pago"] = df_o["Pago"].astype(str).str.strip().str.lower().isin(["true", "1", "yes", "sim"])
 
-    # Garante conversão segura de datas
     for col in ["Data_Visita", "Data_Orcamento", "Data_Conclusao", "Data_Contato"]:
         df_o[col] = pd.to_datetime(df_o[col], errors="coerce").dt.date
 
@@ -158,6 +158,83 @@ def limpar_obras(df):
     df = df.drop_duplicates(subset=["ID"], keep="last")
     return df.reset_index(drop=True)
 
+# =========================
+# GERAÇÃO DE PDF
+# =========================
+class PDFOrcamento(FPDF):
+    def header(self):
+        # Título / Empresa
+        self.set_font('Arial', 'B', 16)
+        self.cell(0, 10, 'Solução Reforma e Construção', 0, 1, 'C')
+        self.set_font('Arial', '', 10)
+        self.cell(0, 5, 'Antônio Francisco Carvalho Silva', 0, 1, 'C')
+        self.cell(0, 5, 'Rua Bandeirantes, 1303 - Pedra Mole', 0, 1, 'C')
+        self.cell(0, 5, 'Contato: (86) 99813-2225', 0, 1, 'C')
+        self.ln(5)
+        self.line(10, 35, 200, 35)
+        self.ln(5)
+
+    def footer(self):
+        self.set_y(-15)
+        self.set_font('Arial', 'I', 8)
+        self.cell(0, 10, f'Página {self.page_no()}', 0, 0, 'C')
+
+def gerar_pdf_bytes(dados_obra):
+    pdf = PDFOrcamento()
+    pdf.add_page()
+    
+    # Tratamento para caracteres latinos (evitar erro de encoding)
+    def txt(s):
+        return str(s).encode('latin-1', 'replace').decode('latin-1')
+
+    # Dados do Orçamento
+    pdf.set_font('Arial', 'B', 12)
+    pdf.cell(0, 10, txt(f"ORÇAMENTO Nº {dados_obra['ID']}"), 0, 1, 'L')
+    
+    pdf.set_font('Arial', '', 10)
+    data_orc = dados_obra.get('Data_Orcamento')
+    if not data_orc: data_orc = datetime.now().date()
+    pdf.cell(0, 6, txt(f"Data de Emissão: {data_orc.strftime('%d/%m/%Y')}"), 0, 1, 'L')
+    pdf.ln(4)
+
+    # Dados do Cliente
+    pdf.set_fill_color(240, 240, 240)
+    pdf.cell(0, 8, txt(f"CLIENTE: {dados_obra['Cliente']}"), 1, 1, 'L', fill=True)
+    pdf.ln(4)
+
+    # Descrição
+    pdf.set_font('Arial', 'B', 10)
+    pdf.cell(0, 6, txt("DESCRIÇÃO DOS SERVIÇOS:"), 0, 1, 'L')
+    pdf.set_font('Arial', '', 10)
+    pdf.multi_cell(0, 6, txt(dados_obra['Descricao']))
+    pdf.ln(8)
+
+    # Valores
+    pdf.set_font('Arial', 'B', 10)
+    pdf.cell(0, 6, txt("RESUMO DE VALORES:"), 0, 1, 'L')
+    
+    pdf.set_font('Arial', '', 10)
+    total = float(dados_obra.get('Total', 0))
+    entrada = float(dados_obra.get('Entrada', 0))
+    
+    if entrada > 0:
+        pdf.cell(100, 8, txt("Entrada (Sinal):"), 1, 0, 'L')
+        pdf.cell(0, 8, txt(br_money(entrada)), 1, 1, 'R')
+    
+    pdf.set_font('Arial', 'B', 12)
+    pdf.cell(100, 10, txt("TOTAL DO ORÇAMENTO:"), 1, 0, 'L', fill=True)
+    pdf.cell(0, 10, txt(br_money(total)), 1, 1, 'R', fill=True)
+    
+    pdf.ln(20)
+    pdf.set_font('Arial', '', 10)
+    pdf.cell(0, 5, txt("________________________________________________"), 0, 1, 'C')
+    pdf.cell(0, 5, txt("Assinatura do Responsável"), 0, 1, 'C')
+
+    return pdf.output(dest='S').encode('latin-1')
+
+# =========================
+# FUNÇÕES DE TEXTO/PDF IMPORTAÇÃO
+# =========================
 def extrair_texto_pdf(pdf_file) -> str:
     try:
         with pdfplumber.open(pdf_file) as pdf:
@@ -187,23 +264,20 @@ def normalizar_data_ddmmaa(data_txt: str) -> str:
     except: pass
     return data_txt
 
-# =========================
-# LÓGICA DE EXTRAÇÃO
-# =========================
 def extrair_dados_pdf_solucao(text: str):
     text = (text or "").replace("\r", "")
     linhas = [l.strip() for l in text.split("\n") if l.strip()]
 
     dados = {}
-    m = re.search(r"(?:Cliente|Para|Sr\(a\)|Nome):\s*(.+)", text, flags=re.IGNORECASE)
+    m = re.search(r"(?:Cliente|Para|Sr\(a\)|Nome)[:\s]*\s*(.+)", text, flags=re.IGNORECASE)
     dados["Cliente"] = m.group(1).strip() if m else "Cliente Novo"
 
-    m = re.search(r"Criado em:\s*(\d{2}/\d{2}/\d{2,4})", text, flags=re.IGNORECASE)
+    m = re.search(r"Criado em[:\s]*(\d{2}/\d{2}/\d{2,4})", text, flags=re.IGNORECASE)
     if not m: m = re.search(r"(\d{2}/\d{2}/\d{2,4})", text)
     dados["Data"] = normalizar_data_ddmmaa(m.group(1)) if m else datetime.now().strftime("%d/%m/%Y")
 
     total = None
-    m = re.search(r"Total:\s*(?:R\$\s*)?([\d\.\,]+)", text, flags=re.IGNORECASE)
+    m = re.search(r"Total[:\s]*(?:R\$\s*)?([\d\.\,]+)", text, flags=re.IGNORECASE)
     if m:
         try: total = brl_to_float(m.group(1))
         except: pass
@@ -301,7 +375,6 @@ menu = st.sidebar.radio("Navegação", ["Dashboard", "Gestão de Obras", "Client
 if menu == "Dashboard":
     st.markdown("<div class='section-title'>Visão Geral</div>", unsafe_allow_html=True)
     
-    # === KPI ===
     obras_ativas = 0
     valor_total = 0.0
     recebido_total = 0.0
@@ -316,7 +389,6 @@ if menu == "Dashboard":
     c3.markdown(f"<div class='card'><div class='kpi-title'>Total Contratos</div><div class='kpi-value'>{br_money(valor_total)}</div></div>", unsafe_allow_html=True)
     c4.markdown(f"<div class='card'><div class='kpi-title'>Total Recebido</div><div class='kpi-value'>{br_money(recebido_total)}</div></div>", unsafe_allow_html=True)
     
-    # === AGENDA DE CONTATOS (NOVO) ===
     st.write("")
     if not df_obras.empty:
         hoje = datetime.now().date()
@@ -407,7 +479,6 @@ elif menu == "Importar/Exportar":
                     nova_obra = pd.DataFrame([{
                         "ID": novo_id_obra, "Cliente": imp_clean, "Status": "🟠 Orçamento Enviado",
                         "Data_Orcamento": imp_data, "Data_Visita": imp_data,
-                        # Define contato padrão para hoje+2 dias
                         "Data_Contato": imp_data + timedelta(days=2),
                         "Total": imp_total, "Descricao": imp_desc,
                         "Custo_MO": imp_total, "Custo_Material": 0.0, "Entrada": 0.0, "Pago": False,
@@ -416,7 +487,7 @@ elif menu == "Importar/Exportar":
                     df_obras = pd.concat([df_obras, nova_obra], ignore_index=True)
                     df_obras = limpar_obras(df_obras)
                     save_data(df_clientes, df_obras)
-                    st.success("Importação concluída! Lembrete de contato criado para daqui a 2 dias.")
+                    st.success("Importação concluída!")
                     st.balloons()
                     del st.session_state["dados_pdf_cache"]
         else: st.error("Erro ao ler PDF.")
@@ -566,7 +637,6 @@ elif menu == "Gestão de Obras":
                     col_act1, col_act2 = st.columns(2)
                     
                     with col_act1:
-                        # Tratamento seguro de Data_Visita
                         raw_visita = dados_obra.get("Data_Visita")
                         d_visita_dt = datetime.now().date()
                         if pd.notnull(raw_visita):
@@ -586,14 +656,10 @@ elif menu == "Gestão de Obras":
 
                 with st.form("form_obra"):
                     status = st.selectbox("Status", ["🔵 Agendamento", "🟠 Orçamento Enviado", "🟤 Execução", "🟢 Concluído", "🔴 Cancelado"], index=["🔵 Agendamento", "🟠 Orçamento Enviado", "🟤 Execução", "🟢 Concluído", "🔴 Cancelado"].index(normalize_status(dados_obra["Status"])))
-                    desc = st.text_area("Descrição", value=str(dados_obra["Descricao"]))
-                    
-                    # NOVO CAMPO DE OBSERVAÇÕES
-                    obs_internas = st.text_area("Notas / Observações Internas", value=str(dados_obra.get("Observacoes", "")), placeholder="Ex: Cliente prefere contato após as 14h; Comprar cimento...")
+                    desc = st.text_area("Descrição (Vai no PDF)", value=str(dados_obra["Descricao"]))
+                    obs_internas = st.text_area("Notas / Observações Internas (Só pra você)", value=str(dados_obra.get("Observacoes", "")), placeholder="Ex: Cliente prefere contato após as 14h; Comprar cimento...")
 
-                    # Datas de Acompanhamento (Tratamento seguro contra NaT)
                     c_date1, c_date2, c_date3 = st.columns(3)
-                    
                     def clean_dt(val):
                         if pd.isnull(val): return datetime.now().date()
                         try: return pd.to_datetime(val).date()
@@ -615,7 +681,7 @@ elif menu == "Gestão de Obras":
                     total_calc = mo + mat
                     st.markdown(f"**Total Calculado:** {br_money(total_calc)}")
                     
-                    if st.form_submit_button("Salvar Obra"):
+                    if st.form_submit_button("💾 Salvar Obra"):
                         novo_id = dados_obra["ID"]
                         if novo_id is None or novo_id == 0: 
                              try: novo_id = int(df_obras["ID"].max()) + 1 if not df_obras.empty else 1
@@ -637,6 +703,24 @@ elif menu == "Gestão de Obras":
                         save_data(df_clientes, df_obras)
                         st.success("Obra salva com sucesso!")
                         st.rerun()
+                
+                # === BOTÃO DE GERAR PDF DO ORÇAMENTO ===
+                if obra_selecionada != "Nova Obra":
+                    st.write("")
+                    st.markdown("##### 📄 Exportar Orçamento")
+                    if st.button("Gerar PDF do Orçamento"):
+                        try:
+                            pdf_bytes = gerar_pdf_bytes(dados_obra)
+                            file_name = f"Orcamento_{dados_obra['ID']}_{cli_sel.replace(' ', '_')}.pdf"
+                            st.download_button(
+                                label="⬇️ Baixar PDF Pronto",
+                                data=pdf_bytes,
+                                file_name=file_name,
+                                mime="application/pdf"
+                            )
+                            st.success("PDF gerado com sucesso! Clique acima para baixar.")
+                        except Exception as e:
+                            st.error(f"Erro ao gerar PDF: {e}")
             
             st.divider()
             with st.expander("🗑️ Excluir uma Obra"):
