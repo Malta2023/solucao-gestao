@@ -13,7 +13,7 @@ st.set_page_config(
     page_title="ObraGestor Pro",
     page_icon="🏗️",
     layout="wide",
-    initial_sidebar_state="collapsed"  # Começa fechado no mobile pra ganhar espaço
+    initial_sidebar_state="collapsed"
 )
 
 # CSS OTIMIZADO PARA CELULAR
@@ -37,28 +37,20 @@ st.markdown(
       .kpi-title { font-size: 14px; opacity: .70; margin-bottom: 4px; font-weight: 500; }
       .kpi-value { font-size: 26px; font-weight: 800; color: #1f2937; }
       
-      /* Ajustes para CELULAR (telas menores que 600px) */
       @media (max-width: 600px) {
           .block-container {
-              padding-top: 1.5rem;   /* Menos teto */
-              padding-left: 0.5rem;  /* Menos borda lateral */
+              padding-top: 1.5rem;
+              padding-left: 0.5rem;
               padding-right: 0.5rem;
           }
-          .card {
-              padding: 15px;         /* Card mais compacto */
-              margin-bottom: 10px;
-          }
-          .kpi-value {
-              font-size: 22px;       /* Fonte menor pra caber */
-          }
-          h1 {
-              font-size: 1.8rem !important; /* Título do app menor */
-          }
+          .card { padding: 15px; margin-bottom: 10px; }
+          .kpi-value { font-size: 22px; }
+          h1 { font-size: 1.8rem !important; }
       }
 
       .stButton>button { 
           width: 100%; 
-          height: 3.2em;             /* Altura boa pro dedo */
+          height: 3.2em; 
           border-radius: 12px; 
           font-weight: 600;
       }
@@ -95,7 +87,6 @@ def normalize_status(s):
     return s
 
 def assinatura_obra(row):
-    # Cria ID unico baseado no conteudo para evitar duplicatas de importacao
     c = str(row.get("Cliente", "")).strip().lower()
     d = str(row.get("Descricao", "")).strip().lower()
     dt = str(row.get("Data_Orcamento", "")).strip()
@@ -136,7 +127,6 @@ def load_data():
     else:
         df_o = pd.read_csv(OBRAS_FILE)
 
-    # Garantir colunas essenciais
     defaults_c = {"ID": None, "Nome": "", "Telefone": "", "Email": "", "Endereco": "", "Data_Cadastro": ""}
     df_c = ensure_cols(df_c, defaults_c)
 
@@ -149,18 +139,15 @@ def load_data():
     }
     df_o = ensure_cols(df_o, defaults_o)
 
-    # Limpeza básica
     df_c["Nome"] = df_c["Nome"].astype(str).replace("nan", "").fillna("").str.strip()
     df_o["Cliente"] = df_o["Cliente"].astype(str).replace("nan", "").fillna("").str.strip()
     df_o["Status"] = df_o["Status"].apply(normalize_status)
     
-    # Numeros
     for col in ["Custo_MO", "Custo_Material", "Total", "Entrada"]:
         df_o[col] = pd.to_numeric(df_o[col], errors="coerce").fillna(0.0)
 
     df_o["Pago"] = df_o["Pago"].astype(str).str.strip().str.lower().isin(["true", "1", "yes", "sim"])
 
-    # Datas
     for col in ["Data_Visita", "Data_Orcamento", "Data_Conclusao"]:
         df_o[col] = pd.to_datetime(df_o[col], errors="coerce").dt.date
 
@@ -173,23 +160,13 @@ def save_data(df_c, df_o):
 def limpar_obras(df):
     if df is None or df.empty:
         return df
-
     df = df.copy()
-    
-    # Garante colunas antes de mexer
-    cols_needed = {
-        "ID": None,
-        "Cliente": "",
-        "Descricao": "",
-        "Data_Orcamento": None,
-        "Total": 0.0
-    }
+    cols_needed = {"ID": None, "Cliente": "", "Descricao": "", "Data_Orcamento": None, "Total": 0.0}
     df = ensure_cols(df, cols_needed)
 
     df["Cliente"] = df["Cliente"].astype(str).replace("nan", "").fillna("").str.strip()
     df = df[df["Cliente"] != ""].reset_index(drop=True)
 
-    # Gera IDs se faltar
     df["ID"] = pd.to_numeric(df["ID"], errors="coerce")
     
     max_id = 0
@@ -206,15 +183,8 @@ def limpar_obras(df):
 
     df["ID"] = df["ID"].astype(int)
     
-    # Remove duplicados exatos de ID
+    # Remove duplicados exatos
     df = df.drop_duplicates(subset=["ID"], keep="last")
-
-    # Remove duplicados de conteúdo (importação repetida)
-    df["_sig"] = df.apply(assinatura_obra, axis=1)
-    df["_dt"] = pd.to_datetime(df["Data_Orcamento"], errors="coerce")
-    df = df.sort_values(["_sig", "_dt"]).drop_duplicates(subset=["_sig"], keep="last")
-    df = df.drop(columns=["_sig", "_dt"])
-
     return df.reset_index(drop=True)
 
 # =========================
@@ -250,7 +220,6 @@ def extrair_dados_pdf_solucao(text: str):
         return None
 
     dados = {}
-    
     m = re.search(r"Cliente:\s*(.+)", text, flags=re.IGNORECASE)
     if m:
         dados["Cliente"] = m.group(1).strip()
@@ -272,7 +241,6 @@ def extrair_dados_pdf_solucao(text: str):
 
     if "Cliente" not in dados or "Total" not in dados:
         return None
-
     return dados
 
 def extrair_dados_pdf(pdf_file):
@@ -289,7 +257,6 @@ def resumo_por_cliente(df_c, df_o):
         return pd.DataFrame()
 
     base = df_c.copy()
-    
     if df_o is None or df_o.empty:
         base["Fase"] = "Sem obra"
         base["Total"] = 0.0
@@ -301,19 +268,14 @@ def resumo_por_cliente(df_c, df_o):
     o["Status"] = o["Status"].apply(normalize_status)
     o["Data_Visita_dt"] = pd.to_datetime(o["Data_Visita"], errors="coerce")
     
-    # Pega status mais recente
     o_sort = o.sort_values(["Cliente", "Data_Visita_dt"])
     ult = o_sort.groupby("Cliente", as_index=False).tail(1)[["Cliente", "Status"]]
     mapa_fase = dict(zip(ult["Cliente"].astype(str), ult["Status"].astype(str)))
 
-    # Totais
     total = o.groupby("Cliente", as_index=False)["Total"].sum()
     
     recebido = o.copy()
-    recebido["Recebido_calc"] = recebido.apply(
-        lambda r: float(r["Total"]) if bool(r["Pago"]) else float(r["Entrada"]), 
-        axis=1
-    )
+    recebido["Recebido_calc"] = recebido.apply(lambda r: float(r["Total"]) if bool(r["Pago"]) else float(r["Entrada"]), axis=1)
     recebido_sum = recebido.groupby("Cliente", as_index=False)["Recebido_calc"].sum().rename(columns={"Recebido_calc": "Recebido"})
 
     base["Fase"] = base["Nome"].astype(str).map(mapa_fase).fillna("Sem obra")
@@ -327,7 +289,7 @@ def resumo_por_cliente(df_c, df_o):
     return base[["Nome", "Telefone", "Endereco", "Fase", "Total", "Recebido", "Pendente"]]
 
 # =========================
-# LÓGICA DE EXCLUSÃO
+# LÓGICA DE EXCLUSÃO E IMPORTAÇÃO
 # =========================
 def excluir_cliente(df_clientes, df_obras, nome, apagar_obras=True):
     nome = str(nome).strip()
@@ -367,10 +329,7 @@ if menu == "Dashboard":
     if not df_obras.empty:
         obras_ativas = len(df_obras[~df_obras["Status"].isin(["🟢 Concluído", "🔴 Cancelado"])])
         valor_total = float(df_obras["Total"].sum())
-        recebido_total = float(df_obras.apply(
-            lambda r: float(r["Total"]) if bool(r["Pago"]) else float(r["Entrada"]), 
-            axis=1
-        ).sum())
+        recebido_total = float(df_obras.apply(lambda r: float(r["Total"]) if bool(r["Pago"]) else float(r["Entrada"]), axis=1).sum())
 
     c1, c2, c3, c4 = st.columns(4)
     c1.markdown(f"<div class='card'><div class='kpi-title'>Obras ativas</div><div class='kpi-value'>{obras_ativas}</div></div>", unsafe_allow_html=True)
@@ -388,7 +347,6 @@ if menu == "Dashboard":
         r_show["Total"] = r_show["Total"].apply(br_money)
         r_show["Recebido"] = r_show["Recebido"].apply(br_money)
         r_show["Pendente"] = r_show["Pendente"].apply(br_money)
-        # Tabela responsiva
         st.dataframe(r_show, use_container_width=True)
 
 # ---------- IMPORTAR / EXPORTAR ----------
@@ -399,39 +357,77 @@ elif menu == "Importar/Exportar":
 
     with colA:
         st.markdown("<div class='card'>", unsafe_allow_html=True)
-        st.subheader("1) Upload do PDF")
+        st.subheader("1) Upload e Importação")
         pdf_file = st.file_uploader("Selecione o arquivo PDF", type="pdf")
-        st.markdown("</div>", unsafe_allow_html=True)
-
-        st.write("")
-
-        st.markdown("<div class='card'>", unsafe_allow_html=True)
-        st.subheader("2) Dados Extraídos")
+        
         dados_pdf = None
         if pdf_file:
             dados_pdf = extrair_dados_pdf(pdf_file)
             if dados_pdf:
-                st.success("PDF lido com sucesso!")
+                st.success("✅ PDF lido com sucesso!")
                 st.json(dados_pdf)
+                
+                # BOTÃO DE SALVAR DE VERDADE
+                if st.button("💾 SALVAR DADOS NO SISTEMA"):
+                    nome_cli = dados_pdf["Cliente"]
+                    
+                    # 1. Cria cliente se não existir
+                    existe_cli = False
+                    if not df_clientes.empty:
+                         if nome_cli in df_clientes["Nome"].astype(str).values:
+                             existe_cli = True
+                    
+                    if not existe_cli:
+                         novo_id_cli = 1
+                         if not df_clientes.empty:
+                             try: novo_id_cli = int(df_clientes["ID"].max()) + 1
+                             except: pass
+                         
+                         novo_cliente = pd.DataFrame([{
+                             "ID": novo_id_cli, "Nome": nome_cli, "Telefone": "", "Email": "", "Endereco": "", 
+                             "Data_Cadastro": datetime.now().strftime("%Y-%m-%d")
+                         }])
+                         df_clientes = pd.concat([df_clientes, novo_cliente], ignore_index=True)
+                         st.toast(f"Cliente {nome_cli} criado!")
+
+                    # 2. Cria obra
+                    novo_id_obra = 1
+                    if not df_obras.empty:
+                        try: novo_id_obra = int(df_obras["ID"].max()) + 1
+                        except: pass
+                    
+                    data_orc = datetime.now().date()
+                    if dados_pdf.get("Data"):
+                        try: data_orc = datetime.strptime(dados_pdf["Data"], "%d/%m/%Y").date()
+                        except: pass
+
+                    nova_obra = pd.DataFrame([{
+                        "ID": novo_id_obra,
+                        "Cliente": nome_cli,
+                        "Status": "🟠 Orçamento Enviado",
+                        "Data_Orcamento": data_orc,
+                        "Data_Visita": data_orc,
+                        "Total": dados_pdf["Total"],
+                        "Descricao": dados_pdf["Descricao"],
+                        "Custo_MO": 0.0, "Custo_Material": 0.0, "Entrada": 0.0, "Pago": False
+                    }])
+                    
+                    df_obras = pd.concat([df_obras, nova_obra], ignore_index=True)
+                    df_obras = limpar_obras(df_obras)
+                    save_data(df_clientes, df_obras)
+                    
+                    st.success("✅ Importação salva com sucesso! Pode verificar na aba Dashboard ou Clientes.")
+                    st.balloons()
             else:
                 st.error("Não foi possível ler os dados deste PDF.")
-        else:
-            st.info("Aguardando upload...")
         st.markdown("</div>", unsafe_allow_html=True)
 
     with colB:
         st.markdown("<div class='card'>", unsafe_allow_html=True)
-        st.subheader("3) Google Calendar")
+        st.subheader("3) Ações Rápidas (Calendar/Maps)")
         
         if 'dados_pdf' in locals() and dados_pdf and dados_pdf.get("Cliente"):
-            data_cal = datetime.now().date()
-            if dados_pdf.get("Data"):
-                try:
-                    data_cal = datetime.strptime(dados_pdf["Data"], "%d/%m/%Y").date()
-                except:
-                    pass
-            
-            d_visita = st.date_input("Data da Visita", value=data_cal)
+            d_visita = st.date_input("Data da Visita", value=datetime.now().date())
             h_visita = st.time_input("Hora", value=dtime(9, 0))
             duracao = st.number_input("Duração (min)", min_value=15, value=60, step=15)
             local_visita = st.text_input("Endereço (opcional)", value="")
@@ -440,18 +436,12 @@ elif menu == "Importar/Exportar":
             link_cal = link_calendar(titulo_evento, d_visita, h_visita, duracao, local_visita)
             
             st.markdown(f"[📅 Criar Evento no Google Calendar]({link_cal})", unsafe_allow_html=True)
+            
+            if local_visita:
+                link_map = link_maps(local_visita)
+                st.markdown(f"[📍 Abrir no Google Maps]({link_map})", unsafe_allow_html=True)
         else:
-            st.info("Carregue um PDF válido para gerar o link.")
-        st.markdown("</div>", unsafe_allow_html=True)
-
-        st.write("")
-
-        st.markdown("<div class='card'>", unsafe_allow_html=True)
-        st.subheader("4) Google Maps")
-        end_mapa = st.text_input("Endereço para buscar", value="")
-        if end_mapa:
-            link_map = link_maps(end_mapa)
-            st.markdown(f"[📍 Abrir no Google Maps]({link_map})", unsafe_allow_html=True)
+            st.info("Carregue um PDF válido para usar essas ferramentas.")
         st.markdown("</div>", unsafe_allow_html=True)
 
 # ---------- CLIENTES ----------
@@ -484,17 +474,12 @@ elif menu == "Clientes":
                 else:
                     novo_id = 1
                     if not df_clientes.empty:
-                        try:
-                            novo_id = int(pd.to_numeric(df_clientes["ID"], errors='coerce').max()) + 1
-                        except:
-                            novo_id = 1
+                        try: novo_id = int(pd.to_numeric(df_clientes["ID"], errors='coerce').max()) + 1
+                        except: novo_id = 1
                     
                     novo_registro = pd.DataFrame([{
-                        "ID": novo_id,
-                        "Nome": nome.strip(),
-                        "Telefone": tel.strip(),
-                        "Email": email.strip(),
-                        "Endereco": end.strip(),
+                        "ID": novo_id, "Nome": nome.strip(), "Telefone": tel.strip(),
+                        "Email": email.strip(), "Endereco": end.strip(),
                         "Data_Cadastro": datetime.now().strftime("%Y-%m-%d")
                     }])
                     
@@ -545,23 +530,19 @@ elif menu == "Gestão de Obras":
                 
             st.divider()
             
-            # --- FORMULÁRIO DE NOVA OBRA / EDIÇÃO ---
             with st.expander("➕ Adicionar / Editar Obra", expanded=True):
-                # Seletor de obra para editar ou nova
                 opcoes_obras = ["Nova Obra"]
                 if not obras_do_cli.empty:
                     opcoes_obras += [f"ID {row['ID']} - {row['Status']}" for _, row in obras_do_cli.iterrows()]
                 
                 obra_selecionada = st.selectbox("Selecione a obra", opcoes_obras)
                 
-                # Dados padrão para Nova Obra
                 dados_obra = {
                     "ID": None, "Status": "🔵 Agendamento", "Descricao": "", 
                     "Custo_MO": 0.0, "Custo_Material": 0.0, "Entrada": 0.0, "Pago": False,
                     "Data_Visita": datetime.now().date(), "Data_Orcamento": datetime.now().date()
                 }
 
-                # Se for edição, carrega dados
                 if obra_selecionada != "Nova Obra":
                     id_selecionado = int(obra_selecionada.split("ID ")[1].split(" -")[0])
                     obra_atual = df_obras[df_obras["ID"] == id_selecionado].iloc[0]
@@ -593,34 +574,20 @@ elif menu == "Gestão de Obras":
                     
                     if btn_salvar_obra:
                         novo_id = dados_obra["ID"]
-                        # Se for nova, gera ID
                         if novo_id is None or novo_id == 0: 
-                             try:
-                                 novo_id = int(df_obras["ID"].max()) + 1 if not df_obras.empty else 1
-                             except:
-                                 novo_id = 1
+                             try: novo_id = int(df_obras["ID"].max()) + 1 if not df_obras.empty else 1
+                             except: novo_id = 1
                         else:
-                             # Se for edição, remove a antiga pra salvar a nova
                              df_obras = df_obras[df_obras["ID"] != novo_id]
                         
                         nova_linha = {
-                            "ID": novo_id,
-                            "Cliente": cli_sel,
-                            "Status": status,
-                            "Descricao": desc,
-                            "Custo_MO": mo,
-                            "Custo_Material": mat,
-                            "Total": total_calc,
-                            "Entrada": ent,
-                            "Pago": pago,
-                            "Data_Visita": d_visita,
-                            "Data_Orcamento": d_orc
+                            "ID": novo_id, "Cliente": cli_sel, "Status": status, "Descricao": desc,
+                            "Custo_MO": mo, "Custo_Material": mat, "Total": total_calc,
+                            "Entrada": ent, "Pago": pago, "Data_Visita": d_visita, "Data_Orcamento": d_orc
                         }
                         
-                        # Garante colunas que faltam
                         for col in df_obras.columns:
-                            if col not in nova_linha:
-                                nova_linha[col] = None
+                            if col not in nova_linha: nova_linha[col] = None
 
                         df_obras = pd.concat([df_obras, pd.DataFrame([nova_linha])], ignore_index=True)
                         save_data(df_clientes, df_obras)
