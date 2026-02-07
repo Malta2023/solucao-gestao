@@ -43,7 +43,7 @@ CLIENTES_FILE = "clientes.csv"
 OBRAS_FILE = "obras.csv"
 
 # =========================
-# SAFE HELPERS
+# HELPERS
 # =========================
 def br_money(x) -> str:
     try:
@@ -56,11 +56,6 @@ def normalize_status(s):
     if s == "" or s.lower() == "nan":
         return "🔵 Agendamento"
     return s
-
-def col_or(df, col, default):
-    if df is None or df.empty:
-        return default
-    return df[col] if col in df.columns else default
 
 def ensure_cols(df, cols_defaults: dict):
     if df is None:
@@ -78,6 +73,30 @@ def assinatura_obra(row):
         str(row.get("Total", "")).strip(),
     ]
     return "||".join(parts)
+
+def link_maps(endereco):
+    base = "https://www.google.com/maps/search/?api=1&query="
+    return base + urllib.parse.quote(str(endereco))
+
+def link_calendar(titulo, data_visita, hora_visita, duracao_min, local):
+    # formato aceito pelo Google Calendar: YYYYMMDDTHHMMSS/YYY... [web:88]
+    try:
+        inicio_dt = datetime.combine(data_visita, hora_visita)
+        fim_dt = inicio_dt + timedelta(minutes=int(duracao_min))
+        start = inicio_dt.strftime("%Y%m%dT%H%M%S")
+        end = fim_dt.strftime("%Y%m%dT%H%M%S")
+
+        base = "https://calendar.google.com/calendar/render?action=TEMPLATE"
+        return (
+            f"{base}"
+            f"&text={urllib.parse.quote(titulo)}"
+            f"&dates={start}/{end}"
+            f"&details={urllib.parse.quote('Visita Técnica')}"
+            f"&location={urllib.parse.quote(str(local))}"
+            f"&ctz=America/Sao_Paulo"
+        )
+    except Exception:
+        return "#"
 
 # =========================
 # LOAD/SAVE
@@ -108,17 +127,18 @@ def load_data():
         "Custo_MO": 0.0, "Custo_Material": 0.0, "Total": 0.0, "Entrada": 0.0, "Pago": False, "Descricao": ""
     })
 
-    # normalize
     df_c["Nome"] = df_c["Nome"].astype(str).replace("nan", "").fillna("").str.strip()
     for col in ["Telefone", "Email", "Endereco"]:
         df_c[col] = df_c[col].astype(str).replace("nan", "").fillna("").str.strip()
 
     df_o["Cliente"] = df_o["Cliente"].astype(str).replace("nan", "").fillna("").str.strip()
     df_o["Status"] = df_o["Status"].apply(normalize_status)
+
     for col in ["Custo_MO", "Custo_Material", "Total", "Entrada"]:
         df_o[col] = pd.to_numeric(df_o[col], errors="coerce").fillna(0.0)
 
     df_o["Pago"] = df_o["Pago"].astype(str).str.strip().str.lower().isin(["true", "1", "yes", "sim"])
+
     for col in ["Data_Visita", "Data_Orcamento", "Data_Conclusao"]:
         df_o[col] = pd.to_datetime(df_o[col], errors="coerce").dt.date
 
@@ -128,8 +148,10 @@ def save_data(df_c, df_o):
     df_c.to_csv(CLIENTES_FILE, index=False)
     df_o.to_csv(OBRAS_FILE, index=False)
 
+df_clientes, df_obras = load_data()
+
 # =========================
-# CLEANUP (no crash)
+# CLEANUP
 # =========================
 def limpar_obras(df):
     if df is None or df.empty:
@@ -144,8 +166,7 @@ def limpar_obras(df):
     df["_sig"] = df.apply(assinatura_obra, axis=1)
 
     max_id = int(df["ID"].max()) if df["ID"].notna().any() else 0
-    missing = df.index[df["ID"].isna()].tolist()
-    for i in missing:
+    for i in df.index[df["ID"].isna()].tolist():
         max_id += 1
         df.at[i, "ID"] = max_id
 
@@ -158,8 +179,11 @@ def limpar_obras(df):
     df = df.drop(columns=["_sig", "_dt"])
     return df.reset_index(drop=True)
 
+df_obras = limpar_obras(df_obras)
+save_data(df_clientes, df_obras)
+
 # =========================
-# PDF (kept)
+# PDF PARSING
 # =========================
 def extrair_texto_pdf(pdf_file) -> str:
     with pdfplumber.open(pdf_file) as pdf:
@@ -167,16 +191,4 @@ def extrair_texto_pdf(pdf_file) -> str:
         for page in pdf.pages:
             t = page.extract_text()
             if t:
-                partes.append(t)
-        return "\n".join(partes).strip()
-
-def brl_to_float(valor_txt: str) -> float:
-    v = str(valor_txt).strip().replace("R$", "").strip()
-    v = v.replace(".", "").replace(",", ".")
-    return float(v)
-
-def normalizar_data_ddmmaa(data_txt: str) -> str:
-    data_txt = str(data_txt).strip()
-    try:
-        if re.search(r"\d{2}/\d{2}/\d{2}$", data_txt):
-            return datetime.strptime(data_txt
+                partes.appen
