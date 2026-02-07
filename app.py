@@ -21,7 +21,6 @@ st.markdown(
     """
     <style>
       .block-container { padding-top: 1.2rem; padding-bottom: 2.5rem; }
-      h1, h2, h3 { letter-spacing: -0.2px; }
       .stButton>button { width: 100%; height: 3em; }
     </style>
     """,
@@ -103,6 +102,9 @@ def normalizar_data_ddmmaa(data_txt: str) -> str:
         pass
     return data_txt
 
+# =========================
+# RECONHECER PDF ANTIGO (Solução Reforma e Construção)
+# =========================
 def extrair_dados_pdf_solucao(text: str):
     if not re.search(r"ORÇAMENTO", text, flags=re.IGNORECASE):
         return None
@@ -137,18 +139,14 @@ def extrair_dados_pdf_solucao(text: str):
 
     return dados
 
+# =========================
+# RECONHECER PDF (GERAL)
+# =========================
 def extrair_dados_pdf(pdf_file):
     try:
         text = extrair_texto_pdf(pdf_file)
         if not text:
             return None
 
-        dados_solucao = extrair_dados_pdf_solucao(text)
-        if dados_solucao:
-            return dados_solucao
-
-        # fallback antigo
-        dados = {"tipo": None}
-        text_up = text.upper()
-
-        if "ORÇAMENTO
+        # 1) tenta modelo antigo
+        dados_sol
