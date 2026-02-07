@@ -20,6 +20,7 @@ st.markdown(
       .kpi-title { font-size: 13px; opacity: .70; margin-bottom: 4px; }
       .kpi-value { font-size: 28px; font-weight: 800; margin-bottom: 2px; }
       .section-title { font-size: 22px; font-weight: 800; margin: 8px 0 6px; }
+      .soft { opacity: .70; font-size: 13px; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -126,16 +127,12 @@ def save_data(df_c, df_o):
     df_c.to_csv(CLIENTES_FILE, index=False)
     df_o.to_csv(OBRAS_FILE, index=False)
 
+# =========================
+# CLEANUP (sem ternário)
+# =========================
 def limpar_obras(df):
     if df is None or df.empty:
         return df
 
     df = df.copy()
-    df = ensure_cols(df, {"ID": None, "Cliente": "", "Descricao": "", "Data_Orcamento": None, "Total": 0.0})
-    df["Cliente"] = df["Cliente"].astype(str).replace("nan", "").fillna("").str.strip()
-    df = df[df["Cliente"] != ""].reset_index(drop=True)
-
-    df["ID"] = pd.to_numeric(df["ID"], errors="coerce")
-    df["_sig"] = df.apply(assinatura_obra, axis=1)
-
-    max_id = int(df["ID"].max()) if df["ID"].notna().any() 
+    df = ensure_cols(df, 
