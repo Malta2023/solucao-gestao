@@ -1,6 +1,7 @@
 streamlit
 pandas
-fpdf
+fpdf2
 pdfplumber
+
 
 
