@@ -7,7 +7,43 @@ import os
 import urllib.parse
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="ObraGestor", page_icon="🏗️", layout="wide")
+st.set_page_config(
+    page_title="ObraGestor Pro", 
+    page_icon="🏗️", 
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# --- ESTILO CSS PERSONALIZADO ---
+st.markdown("""
+    <style>
+    .main {
+        background-color: #f8f9fa;
+    }
+    .stMetric {
+        background-color: #ffffff;
+        padding: 20px;
+        border-radius: 10px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }
+    .stButton>button {
+        width: 100%;
+        border-radius: 5px;
+        height: 3em;
+        transition: all 0.3s;
+    }
+    .stButton>button:hover {
+        border-color: #ff4b4b;
+        color: #ff4b4b;
+    }
+    div[data-testid="stExpander"] {
+        background-color: #ffffff;
+        border-radius: 10px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        margin-bottom: 1rem;
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
 # --- GERENCIAMENTO DE DADOS (CSV) ---
 CLIENTES_FILE = 'clientes.csv'
@@ -17,6 +53,8 @@ def load_data():
     if not os.path.exists(CLIENTES_FILE):
         df_c = pd.DataFrame(columns=["ID", "Nome", "Telefone", "Email", "Endereco", "Data_Cadastro"])
         df_c.to_csv(CLIENTES_FILE, index=False)
+    else:
+        df_c = pd.read_csv(CLIENTES_FILE)
     
     if not os.path.exists(OBRAS_FILE):
         cols = ["ID", "Cliente", "Status", "Data_Contato", "Data_Visita", "Data_Orcamento", 
@@ -24,8 +62,15 @@ def load_data():
                 "Total", "Entrada", "Pago", "Descricao"]
         df_o = pd.DataFrame(columns=cols)
         df_o.to_csv(OBRAS_FILE, index=False)
+    else:
+        df_o = pd.read_csv(OBRAS_FILE)
+        # Garantir que datas sejam lidas corretamente
+        date_cols = ["Data_Visita", "Data_Orcamento", "Data_Conclusao"]
+        for col in date_cols:
+            if col in df_o.columns:
+                df_o[col] = pd.to_datetime(df_o[col]).dt.date
 
-    return pd.read_csv(CLIENTES_FILE), pd.read_csv(OBRAS_FILE)
+    return df_c, df_o
 
 def save_data(df_c, df_o):
     df_c.to_csv(CLIENTES_FILE, index=False)
@@ -35,248 +80,291 @@ df_clientes, df_obras = load_data()
 
 # --- FUNÇÕES UTILITÁRIAS ---
 
-# Gerador de PDF
 def gerar_pdf(tipo, dados):
     pdf = FPDF()
     pdf.add_page()
-    pdf.set_font("Arial", size=12)
+    pdf.set_font("Helvetica", size=12)
     
-    # Cabeçalho
-    pdf.set_font("Arial", 'B', 16)
-    pdf.cell(200, 10, txt=f"DOCUMENTO: {tipo.upper()}", ln=1, align='C')
+    # Cabeçalho com Estilo
+    pdf.set_fill_color(240, 240, 240)
+    pdf.set_font("Helvetica", 'B', 18)
+    pdf.cell(0, 20, txt=f"OBRAGESTOR - {tipo.upper()}", ln=1, align='C', fill=True)
     pdf.ln(10)
     
     # Corpo
-    pdf.set_font("Arial", size=12)
+    pdf.set_font("Helvetica", 'B', 12)
     for key, value in dados.items():
-        pdf.cell(200, 10, txt=f"{key}: {value}", ln=1, align='L')
+        pdf.set_text_color(100, 100, 100)
+        pdf.cell(50, 10, txt=f"{key}:", ln=0)
+        pdf.set_text_color(0, 0, 0)
+        pdf.set_font("Helvetica", '', 12)
+        pdf.cell(0, 10, txt=str(value), ln=1)
+        pdf.set_font("Helvetica", 'B', 12)
     
     pdf.ln(20)
-    pdf.set_font("Arial", 'I', 10)
-    pdf.cell(200, 10, txt="Gerado automaticamente pelo ObraGestor.", ln=1, align='C')
+    pdf.set_font("Helvetica", 'I', 10)
+    pdf.set_text_color(150, 150, 150)
+    pdf.cell(0, 10, txt=f"Gerado em {datetime.now().strftime('%d/%m/%Y %H:%M')}", ln=1, align='C')
     
-    return pdf.output(dest='S').encode('latin-1')
+    return pdf.output(dest='S').encode('latin-1', 'replace')
 
-# Links Inteligentes
 def link_maps(endereco):
     base = "https://www.google.com/maps/search/?api=1&query="
-    return base + urllib.parse.quote(endereco)
+    return base + urllib.parse.quote(str(endereco))
 
 def link_calendar(titulo, data_str, local):
-    # Formato Google Calendar Link
-    # Exige data formato YYYYMMDDTHHmmSSZ
     try:
-        dt = datetime.strptime(str(data_str), "%Y-%m-%d")
-        # Define horário padrão 09:00 as 10:00 se for apenas data
-        start = dt.replace(hour=9, minute=0).strftime("%Y%m%dT%H%M%S")
-        end = dt.replace(hour=10, minute=0).strftime("%Y%m%dT%H%M%S")
-        
+        dt = pd.to_datetime(data_str)
+        start = dt.strftime("%Y%m%dT090000Z")
+        end = dt.strftime("%Y%m%dT100000Z")
         base = "https://calendar.google.com/calendar/render?action=TEMPLATE"
-        details = f"&text={urllib.parse.quote(titulo)}&dates={start}/{end}&details=Visita+Tecnica&location={urllib.parse.quote(local)}"
+        details = f"&text={urllib.parse.quote(titulo)}&dates={start}/{end}&details=Visita+Tecnica&location={urllib.parse.quote(str(local))}"
         return base + details
     except:
         return "#"
 
 # --- INTERFACE ---
 
-st.title("🏗️ ObraGestor Mobile")
-
-# Sidebar para Navegação
-menu = st.sidebar.radio("Navegação", ["Dashboard", "Gerenciar Obras", "Banco de Clientes", "Importar CSV"])
+st.sidebar.title("🏗️ ObraGestor Pro")
+menu = st.sidebar.radio("Navegação", ["📊 Dashboard", "🏗️ Gestão de Obras", "👥 Clientes", "📥 Importar/Exportar"])
 
 # --- ABA: DASHBOARD ---
-if menu == "Dashboard":
-    st.header("Visão Geral")
+if menu == "📊 Dashboard":
+    st.title("Visão Geral do Negócio")
     
-    # Métricas
-    ativos = df_obras[df_obras['Status'] != '🟢 Concluído']['Total'].sum()
-    recebidos = df_obras[df_obras['Pago'] == True]['Entrada'].sum() # Simplificação: considera entrada como recebido se pago=True
+    # Métricas Processadas
+    total_obras = len(df_obras)
+    obras_ativas = len(df_obras[~df_obras['Status'].isin(['🟢 Concluído', '🔴 Cancelado'])])
     
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Valor em Obras Ativas", f"R$ {ativos:,.2f}")
-    col2.metric("Entradas/Caixa", f"R$ {recebidos:,.2f}")
-    col3.metric("Obras em Andamento", len(df_obras[df_obras['Status'] == '🟤 Execução']))
+    # Soma de valores
+    valor_total_ativas = df_obras[~df_obras['Status'].isin(['🟢 Concluído', '🔴 Cancelado'])]['Total'].sum()
+    recebido = df_obras[df_obras['Pago'] == True]['Total'].sum() + df_obras[df_obras['Pago'] == False]['Entrada'].sum()
+    
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Obras Ativas", obras_ativas)
+    col2.metric("Total em Contratos", f"R$ {valor_total_ativas:,.2f}")
+    col3.metric("Caixa Estimado", f"R$ {recebido:,.2f}")
+    col4.metric("Total de Clientes", len(df_clientes))
     
     st.divider()
-    st.subheader("Obras Recentes")
-    st.dataframe(df_obras[['Cliente', 'Status', 'Total', 'Data_Visita']].tail(5))
-
-# --- ABA: BANCO DE CLIENTES ---
-elif menu == "Banco de Clientes":
-    st.header("Clientes")
     
-    with st.expander("➕ Novo Cliente"):
-        with st.form("form_cliente"):
-            c_nome = st.text_input("Nome")
-            c_tel = st.text_input("Telefone")
-            c_email = st.text_input("Email")
-            c_end = st.text_input("Endereço Completo")
-            submit_c = st.form_submit_button("Salvar Cliente")
+    c1, c2 = st.columns(2)
+    with c1:
+        st.subheader("Próximas Visitas")
+        hoje = datetime.now().date()
+        proximas = df_obras[df_obras['Data_Visita'] >= hoje].sort_values('Data_Visita').head(5)
+        if not proximas.empty:
+            st.table(proximas[['Cliente', 'Data_Visita', 'Status']])
+        else:
+            st.info("Nenhuma visita agendada para os próximos dias.")
             
-            if submit_c and c_nome:
-                novo_cliente = {
-                    "ID": len(df_clientes) + 1,
-                    "Nome": c_nome, "Telefone": c_tel, 
-                    "Email": c_email, "Endereco": c_end,
-                    "Data_Cadastro": datetime.now().strftime("%Y-%m-%d")
-                }
-                df_clientes = pd.concat([df_clientes, pd.DataFrame([novo_cliente])], ignore_index=True)
-                save_data(df_clientes, df_obras)
-                st.success("Cliente salvo!")
-                st.rerun()
+    with c2:
+        st.subheader("Status das Obras")
+        if not df_obras.empty:
+            status_counts = df_obras['Status'].value_counts()
+            st.bar_chart(status_counts)
+        else:
+            st.info("Sem dados para exibir o gráfico.")
 
-    # Busca
-    search = st.text_input("Buscar cliente...")
-    if search:
-        st.dataframe(df_clientes[df_clientes['Nome'].str.contains(search, case=False)])
-    else:
-        st.dataframe(df_clientes)
+# --- ABA: CLIENTES ---
+elif menu == "👥 Clientes":
+    st.title("Gestão de Clientes")
+    
+    tab1, tab2 = st.tabs(["Listagem", "Novo Cliente"])
+    
+    with tab1:
+        search = st.text_input("🔍 Buscar cliente por nome ou telefone...")
+        if search:
+            filtered_df = df_clientes[
+                df_clientes['Nome'].str.contains(search, case=False, na=False) | 
+                df_clientes['Telefone'].str.contains(search, case=False, na=False)
+            ]
+            st.dataframe(filtered_df, use_container_width=True)
+        else:
+            st.dataframe(df_clientes, use_container_width=True)
+            
+    with tab2:
+        with st.form("form_cliente", clear_on_submit=True):
+            col_a, col_b = st.columns(2)
+            c_nome = col_a.text_input("Nome Completo*")
+            c_tel = col_b.text_input("Telefone/WhatsApp")
+            c_email = col_a.text_input("E-mail")
+            c_end = col_b.text_input("Endereço de Obra")
+            
+            submit_c = st.form_submit_button("✅ Cadastrar Cliente")
+            
+            if submit_c:
+                if c_nome:
+                    novo_id = df_clientes['ID'].max() + 1 if not df_clientes.empty else 1
+                    novo_cliente = {
+                        "ID": novo_id,
+                        "Nome": c_nome, "Telefone": c_tel, 
+                        "Email": c_email, "Endereco": c_end,
+                        "Data_Cadastro": datetime.now().strftime("%Y-%m-%d")
+                    }
+                    df_clientes = pd.concat([df_clientes, pd.DataFrame([novo_cliente])], ignore_index=True)
+                    save_data(df_clientes, df_obras)
+                    st.success(f"Cliente {c_nome} cadastrado com sucesso!")
+                    st.rerun()
+                else:
+                    st.error("O nome do cliente é obrigatório.")
 
-# --- ABA: GERENCIAR OBRAS (CORE) ---
-elif menu == "Gerenciar Obras":
-    st.header("Gestão de Obras")
+# --- ABA: GESTÃO DE OBRAS ---
+elif menu == "🏗️ Gestão de Obras":
+    st.title("Controle de Obras e Orçamentos")
     
-    # 1. Seleção ou Criação
-    opcoes_clientes = df_clientes['Nome'].tolist()
-    
-    if not opcoes_clientes:
-        st.warning("Cadastre clientes primeiro.")
+    if df_clientes.empty:
+        st.warning("⚠️ Você precisa cadastrar clientes antes de gerenciar obras.")
     else:
-        col_sel, col_add = st.columns([3, 1])
-        cli_selecionado = col_sel.selectbox("Selecione o Cliente", [""] + opcoes_clientes)
+        # Seleção de Cliente
+        cliente_nomes = sorted(df_clientes['Nome'].unique())
+        cli_selecionado = st.selectbox("Selecione o Cliente para gerenciar a obra:", [""] + cliente_nomes)
         
         if cli_selecionado:
-            # Verifica se já existe obra ativa ou cria nova
             obras_cliente = df_obras[df_obras['Cliente'] == cli_selecionado]
             
-            # --- FORMULÁRIO DA OBRA ---
-            st.markdown(f"### Obra de: **{cli_selecionado}**")
-            
-            # Recupera dados do cliente para Maps/Calendar
-            dados_cli = df_clientes[df_clientes['Nome'] == cli_selecionado].iloc[0]
-            
-            # Se já existir obra, permite editar a última (simplificação para demo)
-            # Na prática, você selecionaria qual ID da obra editar
+            # Escolher entre editar existente ou criar nova
             if not obras_cliente.empty:
-                obra_atual = obras_cliente.iloc[-1]
-                idx_obra = df_obras[df_obras['ID'] == obra_atual['ID']].index[0]
+                obra_id_options = ["Nova Obra"] + [f"Obra ID {id}" for id in obras_cliente['ID'].tolist()]
+                obra_selecao = st.radio("Selecione a obra:", obra_id_options, horizontal=True)
             else:
-                # Cria estrutura vazia
-                obra_atual = pd.Series(dtype='object')
+                obra_selecao = "Nova Obra"
+            
+            # Preparar dados da obra
+            if obra_selecao == "Nova Obra":
+                obra_atual = pd.Series({
+                    'Status': "🔵 Agendamento",
+                    'Data_Visita': datetime.now().date(),
+                    'Data_Orcamento': datetime.now().date(),
+                    'Data_Conclusao': datetime.now().date() + timedelta(days=30),
+                    'Custo_MO': 0.0, 'Custo_Material': 0.0, 'Entrada': 0.0,
+                    'Pago': False, 'Descricao': ""
+                })
                 idx_obra = -1
+            else:
+                id_obra = int(obra_selecao.split("ID ")[1])
+                idx_obra = df_obras[df_obras['ID'] == id_obra].index[0]
+                obra_atual = df_obras.loc[idx_obra]
 
-            with st.form("form_obra"):
-                # Status com Cores (via Emoji)
-                status_opts = ["🔵 Agendamento", "🟠 Orçamento Enviado", "🟤 Execução", "🟢 Concluído", "🔴 Cancelado"]
-                
-                # Tenta pegar valor atual ou default
-                st_idx = 0
-                if 'Status' in obra_atual and obra_atual['Status'] in status_opts:
-                    st_idx = status_opts.index(obra_atual['Status'])
-                
-                status = st.selectbox("Status Atual", status_opts, index=st_idx)
-                
-                # Datas
-                c1, c2, c3 = st.columns(3)
-                dt_visita = c1.date_input("Data Visita", value=pd.to_datetime(obra_atual.get('Data_Visita', datetime.now())))
-                dt_orc = c2.date_input("Envio Orçamento", value=pd.to_datetime(obra_atual.get('Data_Orcamento', datetime.now())))
-                dt_conc = c3.date_input("Conclusão", value=pd.to_datetime(obra_atual.get('Data_Conclusao', datetime.now())))
-                
-                # Financeiro (Cálculo Automático)
-                st.subheader("Financeiro")
-                fc1, fc2, fc3 = st.columns(3)
-                mo = fc1.number_input("Mão de Obra (R$)", value=float(obra_atual.get('Custo_MO', 0.0)))
-                mat = fc2.number_input("Material (R$)", value=float(obra_atual.get('Custo_Material', 0.0)))
-                entrada = fc3.number_input("Entrada (R$)", value=float(obra_atual.get('Entrada', 0.0)))
-                
-                total = mo + mat
-                st.markdown(f"**Total: R$ {total:.2f}**")
-                
-                pago = st.checkbox("Pagamento Total Recebido?", value=bool(obra_atual.get('Pago', False)))
-                desc = st.text_area("Descrição do Serviço", value=str(obra_atual.get('Descricao', '')))
-                
-                # Botões de Ação dentro do Form
-                salvar = st.form_submit_button("💾 Salvar Alterações")
+            # Formulário de Edição/Criação
+            with st.expander("📝 Detalhes da Obra", expanded=True):
+                with st.form("form_obra_detalhe"):
+                    status_opts = ["🔵 Agendamento", "🟠 Orçamento Enviado", "🟤 Execução", "🟢 Concluído", "🔴 Cancelado"]
+                    
+                    c1, c2 = st.columns(2)
+                    status = c1.selectbox("Status Atual", status_opts, index=status_opts.index(obra_atual['Status']) if obra_atual['Status'] in status_opts else 0)
+                    desc = c2.text_input("Breve descrição do serviço", value=str(obra_atual['Descricao']))
+                    
+                    st.markdown("---")
+                    d1, d2, d3 = st.columns(3)
+                    dt_visita = d1.date_input("Data da Visita", value=obra_atual['Data_Visita'])
+                    dt_orc = d2.date_input("Data do Orçamento", value=obra_atual['Data_Orcamento'])
+                    dt_conc = d3.date_input("Previsão Conclusão", value=obra_atual['Data_Conclusao'])
+                    
+                    st.markdown("---")
+                    f1, f2, f3 = st.columns(3)
+                    mo = f1.number_input("Mão de Obra (R$)", value=float(obra_atual['Custo_MO']), min_value=0.0, step=100.0)
+                    mat = f2.number_input("Materiais (R$)", value=float(obra_atual['Custo_Material']), min_value=0.0, step=100.0)
+                    entrada = f3.number_input("Valor de Entrada (R$)", value=float(obra_atual['Entrada']), min_value=0.0, step=100.0)
+                    
+                    total = mo + mat
+                    st.info(f"💰 **Valor Total do Contrato: R$ {total:,.2f}**")
+                    
+                    pago = st.checkbox("Pagamento Total Recebido", value=bool(obra_atual['Pago']))
+                    
+                    salvar = st.form_submit_button("💾 Salvar Obra")
+                    
+                    if salvar:
+                        dados_obra = {
+                            "ID": df_obras['ID'].max() + 1 if idx_obra == -1 else obra_atual['ID'],
+                            "Cliente": cli_selecionado,
+                            "Status": status,
+                            "Data_Visita": dt_visita,
+                            "Data_Orcamento": dt_orc,
+                            "Data_Conclusao": dt_conc,
+                            "Custo_MO": mo, "Custo_Material": mat,
+                            "Total": total, "Entrada": entrada,
+                            "Pago": pago, "Descricao": desc
+                        }
+                        
+                        if idx_obra == -1:
+                            df_obras = pd.concat([df_obras, pd.DataFrame([dados_obra])], ignore_index=True)
+                        else:
+                            for key, val in dados_obra.items():
+                                df_obras.at[idx_obra, key] = val
+                        
+                        save_data(df_clientes, df_obras)
+                        st.success("Dados salvos com sucesso!")
+                        st.rerun()
 
-            # --- LÓGICA DE SALVAMENTO ---
-            if salvar:
-                dados_obra = {
-                    "ID": len(df_obras) + 1 if idx_obra == -1 else obra_atual['ID'],
-                    "Cliente": cli_selecionado,
-                    "Status": status,
-                    "Data_Visita": dt_visita,
-                    "Data_Orcamento": dt_orc,
-                    "Data_Conclusao": dt_conc,
-                    "Custo_MO": mo, "Custo_Material": mat,
-                    "Total": total, "Entrada": entrada,
-                    "Pago": pago, "Descricao": desc
-                }
+            # Ações e Documentos
+            if idx_obra != -1:
+                st.subheader("🛠️ Ações Rápidas")
+                dados_cli = df_clientes[df_clientes['Nome'] == cli_selecionado].iloc[0]
                 
-                if idx_obra == -1:
-                    df_obras = pd.concat([df_obras, pd.DataFrame([dados_obra])], ignore_index=True)
-                else:
-                    # Atualiza linha existente
-                    for key, val in dados_obra.items():
-                        df_obras.at[idx_obra, key] = val
+                ac1, ac2, ac3, ac4 = st.columns(4)
                 
-                save_data(df_clientes, df_obras)
-                st.success("Obra Atualizada!")
-                st.rerun()
+                with ac1:
+                    st.link_button("📍 Ver Endereço", link_maps(dados_cli['Endereco']))
+                
+                with ac2:
+                    if status == "🔵 Agendamento":
+                        st.link_button("📅 Agendar Visita", link_calendar(f"Visita: {cli_selecionado}", dt_visita, dados_cli['Endereco']))
+                    else:
+                        st.button("📅 Agendar", disabled=True)
+                
+                with ac3:
+                    pdf_orc = gerar_pdf("Orçamento", {
+                        "Cliente": cli_selecionado, "Serviço": desc,
+                        "Mão de Obra": f"R$ {mo:,.2f}", "Materiais": f"R$ {mat:,.2f}",
+                        "TOTAL": f"R$ {total:,.2f}", "Data": dt_orc.strftime("%d/%m/%Y")
+                    })
+                    st.download_button("📄 Baixar Orçamento", data=pdf_orc, file_name=f"orcamento_{cli_selecionado}.pdf", mime="application/pdf")
+                
+                with ac4:
+                    valor_recibo = total if pago else entrada
+                    pdf_rec = gerar_pdf("Recibo", {
+                        "Recebemos de": cli_selecionado, "Valor": f"R$ {valor_recibo:,.2f}",
+                        "Referente a": desc, "Data": datetime.now().strftime("%d/%m/%Y")
+                    })
+                    st.download_button("🧾 Baixar Recibo", data=pdf_rec, file_name=f"recibo_{cli_selecionado}.pdf", mime="application/pdf")
 
-            # --- AÇÕES EXTERNAS (Fora do form para interatividade) ---
-            st.divider()
-            ac1, ac2, ac3, ac4 = st.columns(4)
-            
-            # 1. Mapa
-            url_map = link_maps(dados_cli['Endereco'])
-            ac1.link_button("📍 Abrir Mapa", url_map)
-            
-            # 2. Calendar
-            if status == "🔵 Agendamento":
-                url_cal = link_calendar(f"Visita: {cli_selecionado}", dt_visita, dados_cli['Endereco'])
-                ac2.link_button("📅 Add Agenda", url_cal)
-            
-            # 3. Gerar PDF Orçamento
-            if ac3.button("📄 PDF Orçamento"):
-                dados_pdf = {
-                    "Cliente": cli_selecionado, "Servico": desc,
-                    "Mao de Obra": f"R$ {mo}", "Material": f"R$ {mat}",
-                    "TOTAL": f"R$ {total}", "Validade": "15 dias"
-                }
-                pdf_bytes = gerar_pdf("Orçamento", dados_pdf)
-                st.download_button("Baixar Orçamento", data=pdf_bytes, file_name="orcamento.pdf", mime="application/pdf")
-
-            # 4. Gerar Recibo
-            if ac4.button("🧾 PDF Recibo"):
-                dados_pdf = {
-                    "Recebemos de": cli_selecionado, "Valor": f"R$ {entrada if not pago else total}",
-                    "Referente a": desc, "Data": str(datetime.now().date())
-                }
-                pdf_bytes = gerar_pdf("Recibo", dados_pdf)
-                st.download_button("Baixar Recibo", data=pdf_bytes, file_name="recibo.pdf", mime="application/pdf")
-
-# --- ABA: IMPORTAR CSV ---
-elif menu == "Importar CSV":
-    st.header("Importação de Dados Antigos")
-    uploaded_file = st.file_uploader("Escolha um arquivo CSV", type="csv")
-    if uploaded_file is not None:
-        df_import = pd.read_csv(uploaded_file)
-        st.write("Visualização:", df_import.head())
+# --- ABA: IMPORTAR/EXPORTAR ---
+elif menu == "📥 Importar/Exportar":
+    st.title("Gerenciamento de Dados")
+    
+    col_imp, col_exp = st.columns(2)
+    
+    with col_imp:
+        st.subheader("Importar Clientes")
+        uploaded_file = st.file_uploader("Upload CSV de Clientes", type="csv")
+        if uploaded_file:
+            try:
+                df_import = pd.read_csv(uploaded_file)
+                st.write("Amostra dos dados:", df_import.head(2))
+                
+                col_n = st.selectbox("Coluna Nome", df_import.columns)
+                col_t = st.selectbox("Coluna Telefone", df_import.columns)
+                
+                if st.button("Confirmar Importação"):
+                    for _, row in df_import.iterrows():
+                        novo_id = df_clientes['ID'].max() + 1 if not df_clientes.empty else 1
+                        novo = {
+                            "ID": novo_id, "Nome": row[col_n], "Telefone": row[col_t],
+                            "Email": "", "Endereco": "", "Data_Cadastro": datetime.now().strftime("%Y-%m-%d")
+                        }
+                        df_clientes = pd.concat([df_clientes, pd.DataFrame([novo])], ignore_index=True)
+                    save_data(df_clientes, df_obras)
+                    st.success("Importação concluída!")
+            except Exception as e:
+                st.error(f"Erro ao processar arquivo: {e}")
+                
+    with col_exp:
+        st.subheader("Exportar Dados")
+        st.write("Baixe seus dados atuais para backup.")
         
-        # Mapeamento simples
-        col_nome = st.selectbox("Qual coluna é o NOME?", df_import.columns)
-        col_tel = st.selectbox("Qual coluna é o TELEFONE?", df_import.columns)
+        csv_c = df_clientes.to_csv(index=False).encode('utf-8')
+        st.download_button("💾 Baixar Clientes (CSV)", csv_c, "clientes_backup.csv", "text/csv")
         
-        if st.button("Importar"):
-            for index, row in df_import.iterrows():
-                novo = {
-                    "ID": len(df_clientes) + 1 + index,
-                    "Nome": row[col_nome],
-                    "Telefone": row[col_tel],
-                    "Email": "", "Endereco": "", 
-                    "Data_Cadastro": datetime.now().strftime("%Y-%m-%d")
-                }
-                df_clientes = pd.concat([df_clientes, pd.DataFrame([novo])], ignore_index=True)
-            
-            save_data(df_clientes, df_obras)
-            st.success(f"{len(df_import)} clientes importados!")
+        csv_o = df_obras.to_csv(index=False).encode('utf-8')
+        st.download_button("💾 Baixar Obras (CSV)", csv_o, "obras_backup.csv", "text/csv")
