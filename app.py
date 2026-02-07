@@ -383,7 +383,8 @@ elif menu == "Importar/Exportar":
 
 elif menu == "Clientes":
     st.markdown("<div class='section-title'>Clientes</div>", unsafe_allow_html=True)
-    tab1, tab2, tab3 = st.tabs(["Listagem", "Novo", "Excluir"])
+    tab1, tab2, tab3, tab4 = st.tabs(["Listagem", "Novo", "Editar", "Excluir"])
+    
     with tab1:
         resumo = resumo_por_cliente(df_clientes, df_obras)
         if resumo.empty: st.info("Nenhum cliente cadastrado.")
@@ -393,7 +394,9 @@ elif menu == "Clientes":
             r_show["Recebido"] = r_show["Recebido"].apply(br_money)
             r_show["Pendente"] = r_show["Pendente"].apply(br_money)
             st.dataframe(r_show, use_container_width=True)
+    
     with tab2:
+        st.caption("Cadastrar novo cliente")
         with st.form("form_novo_cliente", clear_on_submit=True):
             nome = st.text_input("Nome*")
             tel = st.text_input("Telefone")
@@ -415,11 +418,43 @@ elif menu == "Clientes":
                     save_data(df_clientes, df_obras)
                     st.success("Cliente salvo!")
                     st.rerun()
+
     with tab3:
+        st.caption("Editar dados de um cliente existente")
+        if df_clientes.empty: 
+            st.info("Nenhum cliente para editar.")
+        else:
+            lista_nomes = sorted(df_clientes["Nome"].astype(str).str.strip().unique())
+            cli_edit = st.selectbox("Selecione o Cliente para Editar", lista_nomes)
+            
+            if cli_edit:
+                dados_atuais = df_clientes[df_clientes["Nome"].astype(str).str.strip() == cli_edit].iloc[0]
+                with st.form("form_editar_cliente"):
+                    id_cli = dados_atuais["ID"]
+                    novo_nome = st.text_input("Nome", value=dados_atuais["Nome"])
+                    novo_tel = st.text_input("Telefone", value=str(dados_atuais["Telefone"]))
+                    novo_email = st.text_input("E-mail", value=str(dados_atuais["Email"]))
+                    novo_end = st.text_input("Endereço", value=str(dados_atuais["Endereco"]))
+                    
+                    if st.form_submit_button("Atualizar Dados"):
+                        df_clientes = df_clientes[df_clientes["ID"] != id_cli]
+                        linha_atualizada = pd.DataFrame([{
+                            "ID": id_cli, "Nome": novo_nome.strip(), 
+                            "Telefone": novo_tel.strip(), "Email": novo_email.strip(), "Endereco": novo_end.strip(),
+                            "Data_Cadastro": dados_atuais["Data_Cadastro"]
+                        }])
+                        df_clientes = pd.concat([df_clientes, linha_atualizada], ignore_index=True)
+                        if novo_nome.strip() != cli_edit:
+                            df_obras.loc[df_obras["Cliente"] == cli_edit, "Cliente"] = novo_nome.strip()
+                        save_data(df_clientes, df_obras)
+                        st.success("Dados atualizados!")
+                        st.rerun()
+
+    with tab4:
         if df_clientes.empty: st.info("Nada para excluir.")
         else:
             lista_nomes = sorted(df_clientes["Nome"].astype(str).str.strip().unique())
-            nome_del = st.selectbox("Selecione o Cliente", lista_nomes)
+            nome_del = st.selectbox("Selecione o Cliente para Excluir", lista_nomes)
             del_obras = st.checkbox("Apagar também as obras deste cliente?", value=True)
             confirm_del = st.checkbox("Confirmo a exclusão", value=False)
             if st.button("Excluir Cliente Definitivamente"):
@@ -439,7 +474,6 @@ elif menu == "Gestão de Obras":
         cli_sel = st.selectbox("Selecione o Cliente", [""] + lista_cli)
         
         if cli_sel:
-            # Endereço
             dados_cli_row = df_clientes[df_clientes["Nome"].astype(str).str.strip() == cli_sel]
             end_cliente = ""
             if not dados_cli_row.empty:
@@ -465,7 +499,6 @@ elif menu == "Gestão de Obras":
                     opcoes_obras += lista_ids
                     idx_selecao = len(opcoes_obras) - 1
 
-                # Correção do índice para evitar erro
                 if idx_selecao < 0: idx_selecao = 0
                 
                 obra_selecionada = st.selectbox("Selecione a obra para editar:", opcoes_obras, index=idx_selecao)
