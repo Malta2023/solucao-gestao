@@ -7,7 +7,7 @@ import re
 import os
 
 # =========================
-# CONFIG
+# CONFIGURAÇÃO GERAL
 # =========================
 st.set_page_config(
     page_title="ObraGestor Pro",
@@ -61,7 +61,7 @@ CLIENTES_FILE = "clientes.csv"
 OBRAS_FILE = "obras.csv"
 
 # =========================
-# HELPERS
+# FUNÇÕES DE SUPORTE
 # =========================
 def br_money(x) -> str:
     try:
@@ -199,35 +199,98 @@ def normalizar_data_ddmmaa(data_txt: str) -> str:
     except: pass
     return data_txt
 
+# =========================
+# LÓGICA DE EXTRAÇÃO CORRIGIDA
+# =========================
 def extrair_dados_pdf_solucao(text: str):
     dados = {}
+
+    # 1. CLIENTE (Tenta achar "Cliente:" ou "Para:")
     m = re.search(r"(?:Cliente|Para|Sr\(a\)|Nome):\s*(.+)", text, flags=re.IGNORECASE)
     if m: dados["Cliente"] = m.group(1).strip()
+    else: dados["Cliente"] = "Cliente Novo"
 
+    # 2. DATA
     m = re.search(r"(\d{2}/\d{2}/\d{2,4})", text)
     if m: dados["Data"] = normalizar_data_ddmmaa(m.group(1))
+    else: dados["Data"] = datetime.now().strftime("%d/%m/%Y")
 
+    # 3. TOTAL
     valores = re.findall(r"R\$\s*([\d\.\,]+)", text)
     if valores:
         try:
             floats = [brl_to_float(v) for v in valores]
             dados["Total"] = max(floats)
         except: dados["Total"] = 0.0
+    else: dados["Total"] = 0.0
+
+    # 4. DESCRIÇÃO (A MÁGICA ACONTECE AQUI)
     
+    # Lista de frases do cabeçalho para ignorar
+    ignore_list = [
+        "Solução Reforma",
+        "Antônio Francisco",
+        "Rua Bandeirantes",
+        "Pedra Mole",
+        "Contato:",
+        "Orçamento"
+    ]
+
     linhas = text.split('\n')
     desc_lines = []
+    
+    # Flag para saber se já passamos do cabeçalho
+    comecar_captura = False
+
     for l in linhas:
         l_clean = l.strip()
         if len(l_clean) < 3: continue
-        if re.match(r"(Cliente|Data|Total|Orçamento|Telefone|CNPJ|R\$)", l_clean, re.IGNORECASE): continue
-        desc_lines.append(l_clean)
-    
-    if desc_lines: dados["Descricao"] = "\n".join(desc_lines[:6])
-    else: dados["Descricao"] = "Serviços diversos"
 
-    if "Cliente" not in dados: dados["Cliente"] = "Cliente Novo"
-    if "Total" not in dados: dados["Total"] = 0.0
-    if "Data" not in dados: dados["Data"] = datetime.now().strftime("%d/%m/%Y")
+        # Se encontrar a palavra "Descrição", ativa a captura para as PRÓXIMAS linhas
+        if "Descrição" in l_clean or "Descrição:" in l_clean:
+            comecar_captura = True
+            # Se tiver texto na mesma linha depois de "Descrição:", pega ele
+            if ":" in l_clean:
+                resto = l_clean.split(":", 1)[1].strip()
+                if resto and "Valor" not in resto: # Evita "Descrição: Valor:"
+                    desc_lines.append(resto)
+            continue
+        
+        # Se encontrar "Total" ou "Valor Total", PARA a captura
+        if "Total" in l_clean or "Valor Total" in l_clean:
+            comecar_captura = False
+            continue
+
+        # Se a linha tem coisas do cabeçalho que queremos ignorar
+        if any(bad in l_clean for bad in ignore_list):
+            continue
+
+        # Se já passou pelo marcador "Descrição", adiciona tudo
+        if comecar_captura:
+            if "Valor:" not in l_clean: # Remove cabeçalho de tabela se houver
+                desc_lines.append(l_clean)
+        else:
+            # TENTATIVA SECUNDÁRIA: Se não achou "Descrição" explícito,
+            # pega linhas que não parecem data, nem dinheiro, nem o cabeçalho proibido
+            if not re.search(r"R\$|\d{2}/\d{2}", l_clean):
+                 # Adiciona como "candidato" caso a captura oficial falhe
+                 pass
+
+    # Se a captura inteligente funcionou
+    if desc_lines:
+        dados["Descricao"] = "\n".join(desc_lines)
+    else:
+        # Se não achou nada, tenta pegar tudo que não é cabeçalho nem valor
+        backup_lines = []
+        for l in linhas:
+            l_clean = l.strip()
+            if any(bad in l_clean for bad in ignore_list): continue
+            if "Total" in l_clean or "Valor" in l_clean: continue
+            if len(l_clean) > 5 and not re.match(r"^\d", l_clean): # Linhas longas que não começam com numero
+                backup_lines.append(l_clean)
+        
+        dados["Descricao"] = "\n".join(backup_lines[:8]) if backup_lines else "Serviço de Reforma"
+
     return dados
 
 def extrair_dados_pdf(pdf_file):
