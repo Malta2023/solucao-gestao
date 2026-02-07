@@ -8,105 +8,148 @@ import pdfplumber
 import re
 
 # =========================
-# CONFIG (SEGURO)
+# CONFIG
 # =========================
 st.set_page_config(
     page_title="ObraGestor Pro",
     page_icon="🏗️",
-    layout="centered",
-    initial_sidebar_state="collapsed",
+    layout="wide",
+    initial_sidebar_state="expanded",
 )
 
 st.markdown(
     """
     <style>
-      .block-container { padding-top: 1.2rem; padding-bottom: 2.5rem; }
-      .stButton>button { width: 100%; height: 3em; }
+      .block-container { padding-top: 1.2rem; padding-bottom: 2.2rem; max-width: 1200px; }
+      .stButton>button { width: 100%; height: 3em; border-radius: 12px; }
+      .card {
+        background: rgba(255,255,255,0.9);
+        border: 1px solid rgba(0,0,0,0.06);
+        border-radius: 16px;
+        padding: 16px 16px;
+        box-shadow: 0 10px 22px rgba(0,0,0,0.06);
+      }
+      .kpi-title { font-size: 13px; opacity: .70; margin-bottom: 4px; }
+      .kpi-value { font-size: 28px; font-weight: 800; margin-bottom: 2px; }
+      .kpi-sub { font-size: 13px; opacity: .75; }
+      .soft { opacity: .70; font-size: 13px; }
+      .badge {
+        display: inline-block;
+        padding: 3px 10px;
+        border-radius: 999px;
+        font-size: 12px;
+        border: 1px solid rgba(0,0,0,0.08);
+        background: rgba(0,0,0,0.03);
+      }
+      .section-title { font-size: 22px; font-weight: 800; margin: 8px 0 6px; }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
 # =========================
-# ARQUIVOS
+# FILES
 # =========================
 CLIENTES_FILE = "clientes.csv"
 OBRAS_FILE = "obras.csv"
 
 # =========================
-# DADOS
+# HELPERS
+# =========================
+def br_money(x: float) -> str:
+    try:
+        return "R$ " + f"{float(x):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    except Exception:
+        return "R$ 0,00"
+
+def safe_date(x):
+    try:
+        return pd.to_datetime(x, errors="coerce").date()
+    except Exception:
+        return None
+
+def normalize_status(s):
+    s = str(s or "").strip()
+    if s == "" or s.lower() == "nan":
+        return "🔵 Agendamento"
+    return s
+
+def assinatura_obra(row):
+    # assinatura para deduplicar quando ID está quebrado
+    parts = [
+        str(row.get("Cliente", "")).strip().lower(),
+        str(row.get("Descricao", "")).strip().lower(),
+        str(row.get("Data_Orcamento", "")).strip(),
+        str(row.get("Total", "")).strip(),
+    ]
+    return "||".join(parts)
+
+# =========================
+# LOAD/SAVE
 # =========================
 def load_data():
     if not os.path.exists(CLIENTES_FILE):
-        df_c = pd.DataFrame(
-            columns=["ID", "Nome", "Telefone", "Email", "Endereco", "Data_Cadastro"]
-        )
+        df_c = pd.DataFrame(columns=["ID", "Nome", "Telefone", "Email", "Endereco", "Data_Cadastro"])
         df_c.to_csv(CLIENTES_FILE, index=False)
     else:
         df_c = pd.read_csv(CLIENTES_FILE)
 
     if not os.path.exists(OBRAS_FILE):
         cols = [
-            "ID",
-            "Cliente",
-            "Status",
-            "Data_Contato",
-            "Data_Visita",
-            "Data_Orcamento",
-            "Data_Aceite",
-            "Data_Conclusao",
-            "Custo_MO",
-            "Custo_Material",
-            "Total",
-            "Entrada",
-            "Pago",
-            "Descricao",
+            "ID", "Cliente", "Status",
+            "Data_Contato", "Data_Visita", "Data_Orcamento", "Data_Aceite", "Data_Conclusao",
+            "Custo_MO", "Custo_Material", "Total", "Entrada", "Pago", "Descricao",
         ]
         df_o = pd.DataFrame(columns=cols)
         df_o.to_csv(OBRAS_FILE, index=False)
     else:
         df_o = pd.read_csv(OBRAS_FILE)
 
-        # datas
+    # normaliza clientes
+    if not df_c.empty:
+        for col in ["Nome", "Telefone", "Email", "Endereco"]:
+            if col in df_c.columns:
+                df_c[col] = df_c[col].astype(str).replace("nan", "").fillna("").str.strip()
+
+    # normaliza obras
+    if not df_o.empty:
+        if "Cliente" in df_o.columns:
+            df_o["Cliente"] = df_o["Cliente"].astype(str).replace("nan", "").fillna("").str.strip()
+
+        if "Status" in df_o.columns:
+            df_o["Status"] = df_o["Status"].apply(normalize_status)
+
         for col in ["Data_Visita", "Data_Orcamento", "Data_Conclusao"]:
             if col in df_o.columns:
                 df_o[col] = pd.to_datetime(df_o[col], errors="coerce").dt.date
 
-        # bool (garante que "True"/"False" vindo do CSV vira bool)
-        if "Pago" in df_o.columns:
-            df_o["Pago"] = (
-                df_o["Pago"]
-                .astype(str)
-                .str.strip()
-                .str.lower()
-                .isin(["true", "1", "yes", "sim"])
-            )
-
-        # números
         for col in ["Custo_MO", "Custo_Material", "Total", "Entrada"]:
             if col in df_o.columns:
                 df_o[col] = pd.to_numeric(df_o[col], errors="coerce").fillna(0.0)
 
-        # garante colunas mínimas (caso CSV antigo)
-        if "Descricao" not in df_o.columns:
-            df_o["Descricao"] = ""
-        if "Entrada" not in df_o.columns:
-            df_o["Entrada"] = 0.0
-        if "Pago" not in df_o.columns:
+        if "Pago" in df_o.columns:
+            df_o["Pago"] = (
+                df_o["Pago"].astype(str).str.strip().str.lower().isin(["true", "1", "yes", "sim"])
+            )
+        else:
             df_o["Pago"] = False
 
-    return df_c, df_o
+        if "Descricao" not in df_o.columns:
+            df_o["Descricao"] = ""
 
+        if "ID" not in df_o.columns:
+            df_o["ID"] = None
+
+    return df_c, df_o
 
 def save_data(df_c, df_o):
     df_c.to_csv(CLIENTES_FILE, index=False)
     df_o.to_csv(OBRAS_FILE, index=False)
 
-
 df_clientes, df_obras = load_data()
 
 # =========================
-# LIMPEZA (corrige contagem errada)
+# CLEANUP (dedup + IDs)
 # =========================
 def limpar_obras(df):
     if df is None or df.empty:
@@ -114,51 +157,43 @@ def limpar_obras(df):
 
     df = df.copy()
 
-    # remove linhas sem cliente (lixo de CSV)
-    if "Cliente" in df.columns:
-        df["Cliente"] = df["Cliente"].astype(str).str.strip()
-        df = df[
-            df["Cliente"].notna()
-            & (df["Cliente"] != "")
-            & (df["Cliente"].str.lower() != "nan")
-        ]
+    # remove lixo
+    df["Cliente"] = df["Cliente"].astype(str).replace("nan", "").fillna("").str.strip()
+    df = df[df["Cliente"] != ""]
 
-    # remove duplicadas
-    if "ID" in df.columns:
-        df["ID"] = pd.to_numeric(df["ID"], errors="coerce")
-        df = df.drop_duplicates(subset=["ID"], keep="last")
+    # normaliza ID
+    df["ID"] = pd.to_numeric(df["ID"], errors="coerce")
+    # cria assinatura para dedup quando ID está NaN
+    df["_sig"] = df.apply(assinatura_obra, axis=1)
+
+    # garante ID para linhas sem ID
+    max_id = int(df["ID"].max()) if df["ID"].notna().any() else 0
+    for i in df.index[df["ID"].isna()].tolist():
+        max_id += 1
+        df.at[i, "ID"] = max_id
+
+    df["ID"] = df["ID"].astype(int)
+
+    # dedup por ID
+    df = df.drop_duplicates(subset=["ID"], keep="last")
+
+    # dedup por assinatura (se existirem duplicadas com IDs diferentes)
+    # mantém a última (mais recente) por data de orçamento
+    if "Data_Orcamento" in df.columns:
+        df["_dt"] = pd.to_datetime(df["Data_Orcamento"], errors="coerce")
+        df = df.sort_values(["_sig", "_dt"]).drop_duplicates(subset=["_sig"], keep="last")
+        df = df.drop(columns=["_dt"])
     else:
-        base_cols = [c for c in ["Cliente", "Data_Orcamento", "Total", "Descricao"] if c in df.columns]
-        if base_cols:
-            df = df.drop_duplicates(subset=base_cols, keep="last")
+        df = df.drop_duplicates(subset=["_sig"], keep="last")
 
+    df = df.drop(columns=["_sig"])
     return df.reset_index(drop=True)
 
-
 df_obras = limpar_obras(df_obras)
+save_data(df_clientes, df_obras)
 
 # =========================
-# INPUT BR (celular)
-# =========================
-def parse_brl_num(s, default=0.0):
-    try:
-        s = str(s).strip()
-        if s == "":
-            return float(default)
-        s = s.replace("R$", "").strip()
-        s = s.replace(".", "").replace(",", ".")
-        return float(s)
-    except Exception:
-        return float(default)
-
-def fmt_brl_num(x):
-    try:
-        return f"{float(x):.2f}".replace(".", ",")
-    except Exception:
-        return "0,00"
-
-# =========================
-# PDF -> TEXTO (SEM QUEBRAR)
+# PDF
 # =========================
 def extrair_texto_pdf(pdf_file) -> str:
     with pdfplumber.open(pdf_file) as pdf:
@@ -169,12 +204,10 @@ def extrair_texto_pdf(pdf_file) -> str:
                 partes.append(t)
         return "\n".join(partes).strip()
 
-
 def brl_to_float(valor_txt: str) -> float:
     v = str(valor_txt).strip().replace("R$", "").strip()
     v = v.replace(".", "").replace(",", ".")
     return float(v)
-
 
 def normalizar_data_ddmmaa(data_txt: str) -> str:
     data_txt = str(data_txt).strip()
@@ -187,10 +220,6 @@ def normalizar_data_ddmmaa(data_txt: str) -> str:
         pass
     return data_txt
 
-
-# =========================
-# RECONHECER PDF ANTIGO (Solução Reforma e Construção)
-# =========================
 def extrair_dados_pdf_solucao(text: str):
     if not re.search(r"ORÇAMENTO", text, flags=re.IGNORECASE):
         return None
@@ -216,14 +245,10 @@ def extrair_dados_pdf_solucao(text: str):
         except Exception:
             pass
 
-    m = re.search(
-        r"Descrição:\s*(.*?)\s*Total:", text, flags=re.IGNORECASE | re.DOTALL
-    )
+    m = re.search(r"Descrição:\s*(.*?)\s*Total:", text, flags=re.IGNORECASE | re.DOTALL)
     if m:
         desc = m.group(1).strip()
-        desc = re.sub(
-            r"^\s*Valor:\s*$", "", desc, flags=re.IGNORECASE | re.MULTILINE
-        ).strip()
+        desc = re.sub(r"^\s*Valor:\s*$", "", desc, flags=re.IGNORECASE | re.MULTILINE).strip()
         desc = re.sub(r"\n{3,}", "\n\n", desc)
         dados["Serviço"] = desc
 
@@ -232,10 +257,6 @@ def extrair_dados_pdf_solucao(text: str):
 
     return dados
 
-
-# =========================
-# RECONHECER PDF (GERAL)
-# =========================
 def extrair_dados_pdf(pdf_file):
     try:
         text = extrair_texto_pdf(pdf_file)
@@ -285,9 +306,8 @@ def extrair_dados_pdf(pdf_file):
         st.error(f"Erro ao ler PDF: {e}")
         return None
 
-
 # =========================
-# GERAR PDF NOVO (PADRÃO)
+# PDF GENERATOR
 # =========================
 def gerar_pdf(tipo, dados):
     pdf = FPDF()
@@ -318,15 +338,8 @@ def gerar_pdf(tipo, dados):
     pdf.ln(10)
     pdf.set_font("Helvetica", "I", 10)
     pdf.set_text_color(140, 140, 140)
-    pdf.cell(
-        0,
-        10,
-        txt=f"Gerado em {datetime.now().strftime('%d/%m/%Y %H:%M')}",
-        ln=1,
-        align="C",
-    )
+    pdf.cell(0, 10, txt=f"Gerado em {datetime.now().strftime('%d/%m/%Y %H:%M')}", ln=1, align="C")
     return pdf.output(dest="S").encode("latin-1", "replace")
-
 
 # =========================
 # LINKS
@@ -334,7 +347,6 @@ def gerar_pdf(tipo, dados):
 def link_maps(endereco):
     base = "https://www.google.com/maps/search/?api=1&query="
     return base + urllib.parse.quote(str(endereco))
-
 
 def link_calendar(titulo, data_visita, hora_visita, duracao_min, local):
     try:
@@ -355,119 +367,167 @@ def link_calendar(titulo, data_visita, hora_visita, duracao_min, local):
     except Exception:
         return "#"
 
-
 # =========================
-# CLIENTES + FASE
+# VIEWS
 # =========================
-def status_por_cliente(df_clientes_in, df_obras_in):
-    if df_clientes_in is None or df_clientes_in.empty:
-        return df_clientes_in
+def resumo_por_cliente(df_c, df_o):
+    if df_c is None or df_c.empty:
+        return pd.DataFrame()
 
-    out = df_clientes_in.copy()
+    base = df_c.copy()
+    base["Nome"] = base["Nome"].astype(str).str.strip()
 
-    if df_obras_in is None or df_obras_in.empty or "Cliente" not in df_obras_in.columns:
-        out["Fase"] = "Sem obra"
-        return out
+    if df_o is None or df_o.empty:
+        base["Fase"] = "Sem obra"
+        base["Total"] = 0.0
+        base["Recebido"] = 0.0
+        base["Pendente"] = 0.0
+        base["Proxima_visita"] = None
+        return base[["Nome", "Telefone", "Endereco", "Fase", "Total", "Recebido", "Pendente", "Proxima_visita"]]
 
-    tmp = df_obras_in.copy()
+    o = df_o.copy()
+    o["Cliente"] = o["Cliente"].astype(str).str.strip()
+    o["Status"] = o["Status"].apply(normalize_status)
 
-    data_col = "Data_Visita" if "Data_Visita" in tmp.columns else ("Data_Orcamento" if "Data_Orcamento" in tmp.columns else None)
-    if data_col:
-        tmp[data_col] = pd.to_datetime(tmp[data_col], errors="coerce")
-        tmp = tmp.sort_values(data_col)
-        ult = tmp.groupby("Cliente", as_index=False).tail(1)
+    o["Data_Visita_dt"] = pd.to_datetime(o["Data_Visita"], errors="coerce")
+    o["Data_Orc_dt"] = pd.to_datetime(o["Data_Orcamento"], errors="coerce")
+
+    # fase mais recente
+    o_sort = o.sort_values(["Cliente", "Data_Visita_dt", "Data_Orc_dt"])
+    ult = o_sort.groupby("Cliente", as_index=False).tail(1)[["Cliente", "Status"]]
+    mapa_fase = dict(zip(ult["Cliente"], ult["Status"]))
+
+    # totais
+    total = o.groupby("Cliente", as_index=False)["Total"].sum().rename(columns={"Total": "Total"})
+    recebido = o.copy()
+    recebido["Recebido_calc"] = recebido.apply(lambda r: float(r["Total"]) if bool(r["Pago"]) else float(r["Entrada"]), axis=1)
+    recebido = recebido.groupby("Cliente", as_index=False)["Recebido_calc"].sum().rename(columns={"Recebido_calc": "Recebido"})
+
+    # próxima visita
+    hoje = pd.Timestamp.now().normalize()
+    prox = o[o["Data_Visita_dt"].notna() & (o["Data_Visita_dt"] >= hoje)]
+    if not prox.empty:
+        prox = prox.sort_values(["Cliente", "Data_Visita_dt"]).groupby("Cliente", as_index=False).head(1)
+        mapa_prox = dict(zip(prox["Cliente"], prox["Data_Visita_dt"].dt.date))
     else:
-        ult = tmp.groupby("Cliente", as_index=False).tail(1)
+        mapa_prox = {}
 
-    mapa = dict(zip(ult["Cliente"].astype(str), ult["Status"].astype(str)))
-    out["Fase"] = out["Nome"].astype(str).map(mapa).fillna("Sem obra")
-    return out
+    base["Fase"] = base["Nome"].map(mapa_fase).fillna("Sem obra")
+    base = base.merge(total, how="left", left_on="Nome", right_on="Cliente").drop(columns=["Cliente"], errors="ignore")
+    base = base.merge(recebido, how="left", left_on="Nome", right_on="Cliente").drop(columns=["Cliente"], errors="ignore")
 
+    base["Total"] = pd.to_numeric(base["Total"], errors="coerce").fillna(0.0)
+    base["Recebido"] = pd.to_numeric(base["Recebido"], errors="coerce").fillna(0.0)
+    base["Pendente"] = (base["Total"] - base["Recebido"]).clip(lower=0.0)
+    base["Proxima_visita"] = base["Nome"].map(mapa_prox)
+
+    return base[["Nome", "Telefone", "Endereco", "Fase", "Total", "Recebido", "Pendente", "Proxima_visita"]]
 
 # =========================
-# UI
+# SIDEBAR
 # =========================
 st.sidebar.title("🏗️ ObraGestor Pro")
-menu = st.sidebar.radio(
-    "Navegação",
-    ["📊 Dashboard", "🏗️ Gestão de Obras", "👥 Clientes", "📥 Importar/Exportar"],
-)
+menu = st.sidebar.radio("Navegação", ["📊 Dashboard", "🏗️ Gestão de Obras", "👥 Clientes", "📥 Importar/Exportar"])
 
-# ---------- DASHBOARD ----------
+# =========================
+# DASHBOARD
+# =========================
 if menu == "📊 Dashboard":
-    st.title("Visão Geral")
+    st.markdown("<div class='section-title'>Visão Geral</div>", unsafe_allow_html=True)
 
-    if df_obras is None or df_obras.empty:
-        obras_ativas = 0
-        valor_total_ativas = 0.0
+    obras_validas = df_obras.copy() if df_obras is not None else pd.DataFrame()
+    if not obras_validas.empty:
+        obras_validas["Status"] = obras_validas["Status"].apply(normalize_status)
+
+    obras_ativas = 0 if obras_validas.empty else len(obras_validas[~obras_validas["Status"].isin(["🟢 Concluído", "🔴 Cancelado"])])
+    valor_total = 0.0 if obras_validas.empty else float(obras_validas["Total"].sum())
+
+    if obras_validas.empty:
         recebido = 0.0
     else:
-        obras_ativas = len(
-            df_obras[~df_obras["Status"].isin(["🟢 Concluído", "🔴 Cancelado"])]
+        recebido = float(
+            obras_validas.apply(lambda r: float(r["Total"]) if bool(r["Pago"]) else float(r["Entrada"]), axis=1).sum()
         )
-        valor_total_ativas = df_obras[
-            ~df_obras["Status"].isin(["🟢 Concluído", "🔴 Cancelado"])
-        ]["Total"].sum()
 
-        recebido = df_obras[df_obras["Pago"] == True]["Total"].sum() + df_obras[
-            df_obras["Pago"] == False
-        ]["Entrada"].sum()
+    clientes_qtd = 0 if df_clientes is None else len(df_clientes)
 
-    m1, m2 = st.columns(2)
-    m1.metric("Obras ativas", obras_ativas)
-    m2.metric("Clientes", len(df_clientes))
+    c1, c2, c3, c4 = st.columns(4)
+    c1.markdown(f"<div class='card'><div class='kpi-title'>Obras ativas</div><div class='kpi-value'>{obras_ativas}</div><div class='kpi-sub'>Em andamento</div></div>", unsafe_allow_html=True)
+    c2.markdown(f"<div class='card'><div class='kpi-title'>Clientes</div><div class='kpi-value'>{clientes_qtd}</div><div class='kpi-sub'>Cadastrados</div></div>", unsafe_allow_html=True)
+    c3.markdown(f"<div class='card'><div class='kpi-title'>Total em contratos</div><div class='kpi-value'>{br_money(valor_total)}</div><div class='kpi-sub'>Somatório</div></div>", unsafe_allow_html=True)
+    c4.markdown(f"<div class='card'><div class='kpi-title'>Caixa estimado</div><div class='kpi-value'>{br_money(recebido)}</div><div class='kpi-sub'>Total recebido</div></div>", unsafe_allow_html=True)
 
-    m3, m4 = st.columns(2)
-    m3.metric("Total em contratos", f"R$ {valor_total_ativas:,.2f}")
-    m4.metric("Caixa estimado", f"R$ {recebido:,.2f}")
+    st.write("")
 
-    st.divider()
+    left, right = st.columns([1.2, 1])
 
-    c1, c2 = st.columns(2)
-    with c1:
-        st.subheader("Próximas visitas")
+    with left:
+        st.markdown("<div class='card'>", unsafe_allow_html=True)
+        st.markdown("<div class='section-title'>Resumo por cliente</div>", unsafe_allow_html=True)
+        resumo = resumo_por_cliente(df_clientes, obras_validas)
+        if resumo.empty:
+            st.info("Sem dados ainda.")
+        else:
+            resumo_show = resumo.copy()
+            resumo_show["Total"] = resumo_show["Total"].apply(br_money)
+            resumo_show["Recebido"] = resumo_show["Recebido"].apply(br_money)
+            resumo_show["Pendente"] = resumo_show["Pendente"].apply(br_money)
+            st.dataframe(resumo_show, use_container_width=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    with right:
+        st.markdown("<div class='card'>", unsafe_allow_html=True)
+        st.markdown("<div class='section-title'>Próximas visitas</div>", unsafe_allow_html=True)
         hoje = datetime.now().date()
-        proximas = pd.DataFrame()
-        if df_obras is not None and not df_obras.empty and "Data_Visita" in df_obras.columns:
-            proximas = (
-                df_obras[df_obras["Data_Visita"] >= hoje]
-                .sort_values("Data_Visita")
-                .head(8)
-            )
-
-        if not proximas.empty:
-            st.dataframe(
-                proximas[["Cliente", "Data_Visita", "Status"]],
-                use_container_width=True,
-            )
+        if obras_validas.empty or "Data_Visita" not in obras_validas.columns:
+            st.info("Nenhuma visita.")
         else:
-            st.info("Nenhuma visita agendada para os próximos dias.")
+            prox = obras_validas.copy()
+            prox = prox[prox["Data_Visita"].notna()]
+            prox = prox[prox["Data_Visita"] >= hoje].sort_values("Data_Visita").head(8)
+            if prox.empty:
+                st.info("Nenhuma visita agendada para os próximos dias.")
+            else:
+                st.dataframe(prox[["Cliente", "Data_Visita", "Status"]], use_container_width=True)
+        st.markdown("</div>", unsafe_allow_html=True)
 
-    with c2:
-        st.subheader("Status das obras")
-        if df_obras is not None and not df_obras.empty and "Status" in df_obras.columns:
-            st.bar_chart(df_obras["Status"].value_counts())
+        st.write("")
+
+        st.markdown("<div class='card'>", unsafe_allow_html=True)
+        st.markdown("<div class='section-title'>Status das obras</div>", unsafe_allow_html=True)
+        if obras_validas.empty:
+            st.info("Sem dados.")
         else:
-            st.info("Sem dados para exibir.")
+            st.bar_chart(obras_validas["Status"].value_counts())
+        st.markdown("</div>", unsafe_allow_html=True)
 
-# ---------- CLIENTES ----------
+# =========================
+# CLIENTES
+# =========================
 elif menu == "👥 Clientes":
-    st.title("Clientes")
+    st.markdown("<div class='section-title'>Clientes</div>", unsafe_allow_html=True)
 
     tab1, tab2 = st.tabs(["Listagem", "Novo cliente"])
 
     with tab1:
         search = st.text_input("Buscar por nome ou telefone")
-        df_view = status_por_cliente(df_clientes, df_obras)
+        resumo = resumo_por_cliente(df_clientes, df_obras)
 
-        if search:
-            filtered_df = df_view[
-                df_view["Nome"].astype(str).str.contains(search, case=False, na=False)
-                | df_view["Telefone"].astype(str).str.contains(search, case=False, na=False)
-            ]
-            st.dataframe(filtered_df, use_container_width=True)
+        if resumo.empty:
+            st.info("Sem clientes cadastrados.")
         else:
-            st.dataframe(df_view, use_container_width=True)
+            view = resumo.copy()
+            if search:
+                view = view[
+                    view["Nome"].astype(str).str.contains(search, case=False, na=False)
+                    | view["Telefone"].astype(str).str.contains(search, case=False, na=False)
+                ]
+
+            view_show = view.copy()
+            view_show["Total"] = view_show["Total"].apply(br_money)
+            view_show["Recebido"] = view_show["Recebido"].apply(br_money)
+            view_show["Pendente"] = view_show["Pendente"].apply(br_money)
+            st.dataframe(view_show, use_container_width=True)
 
     with tab2:
         with st.form("form_cliente", clear_on_submit=True):
@@ -482,123 +542,99 @@ elif menu == "👥 Clientes":
                     novo_id = df_clientes["ID"].max() + 1 if not df_clientes.empty else 1
                     novo_cliente = {
                         "ID": novo_id,
-                        "Nome": c_nome,
-                        "Telefone": c_tel,
-                        "Email": c_email,
-                        "Endereco": c_end,
+                        "Nome": c_nome.strip(),
+                        "Telefone": c_tel.strip(),
+                        "Email": c_email.strip(),
+                        "Endereco": c_end.strip(),
                         "Data_Cadastro": datetime.now().strftime("%Y-%m-%d"),
                     }
-                    df_clientes = pd.concat(
-                        [df_clientes, pd.DataFrame([novo_cliente])], ignore_index=True
-                    )
+                    df_clientes = pd.concat([df_clientes, pd.DataFrame([novo_cliente])], ignore_index=True)
                     save_data(df_clientes, df_obras)
                     st.success("Cliente cadastrado!")
                     st.rerun()
                 else:
                     st.error("O nome do cliente é obrigatório.")
 
-# ---------- OBRAS ----------
+# =========================
+# OBRAS
+# =========================
 elif menu == "🏗️ Gestão de Obras":
-    st.title("Gestão de Obras")
+    st.markdown("<div class='section-title'>Gestão de Obras</div>", unsafe_allow_html=True)
 
     if df_clientes is None or df_clientes.empty:
         st.warning("Cadastre um cliente primeiro.")
     else:
-        cliente_nomes = sorted(df_clientes["Nome"].dropna().unique())
+        st.caption("Valores: use ponto para centavos. Ex: 3467.50 (o app salva certinho).")  # [web:185]
+
+        cliente_nomes = sorted(df_clientes["Nome"].dropna().astype(str).str.strip().unique())
         cli_selecionado = st.selectbox("Cliente", [""] + cliente_nomes)
 
         if cli_selecionado:
-            obras_cliente = (
-                df_obras[df_obras["Cliente"] == cli_selecionado]
-                if df_obras is not None and not df_obras.empty
-                else pd.DataFrame()
-            )
+            obras_cliente = df_obras[df_obras["Cliente"] == cli_selecionado] if (df_obras is not None and not df_obras.empty) else pd.DataFrame()
 
             if not obras_cliente.empty:
-                obra_id_options = ["Nova obra"] + [
-                    f"Obra ID {i}" for i in obras_cliente["ID"].tolist()
-                ]
+                obra_id_options = ["Nova obra"] + [f"Obra ID {i}" for i in obras_cliente["ID"].astype(int).tolist()]
                 obra_selecao = st.radio("Obra", obra_id_options)
             else:
                 obra_selecao = "Nova obra"
 
             if obra_selecao == "Nova obra":
-                obra_atual = pd.Series(
-                    {
-                        "Status": "🔵 Agendamento",
-                        "Data_Visita": datetime.now().date(),
-                        "Data_Orcamento": datetime.now().date(),
-                        "Data_Conclusao": datetime.now().date() + timedelta(days=30),
-                        "Custo_MO": 0.0,
-                        "Custo_Material": 0.0,
-                        "Entrada": 0.0,
-                        "Pago": False,
-                        "Descricao": "",
-                    }
-                )
+                obra_atual = pd.Series({
+                    "ID": None,
+                    "Status": "🔵 Agendamento",
+                    "Data_Visita": datetime.now().date(),
+                    "Data_Orcamento": datetime.now().date(),
+                    "Data_Conclusao": datetime.now().date() + timedelta(days=30),
+                    "Custo_MO": 0.0,
+                    "Custo_Material": 0.0,
+                    "Entrada": 0.0,
+                    "Pago": False,
+                    "Descricao": "",
+                })
                 idx_obra = -1
             else:
                 id_obra = int(obra_selecao.split("ID ")[1])
-                idx_obra = df_obras[df_obras["ID"] == id_obra].index[0]
+                idx_obra = df_obras[df_obras["ID"].astype(int) == id_obra].index[0]
                 obra_atual = df_obras.loc[idx_obra]
 
             with st.form("form_obra_detalhe"):
-                status_opts = [
-                    "🔵 Agendamento",
-                    "🟠 Orçamento Enviado",
-                    "🟤 Execução",
-                    "🟢 Concluído",
-                    "🔴 Cancelado",
-                ]
+                status_opts = ["🔵 Agendamento", "🟠 Orçamento Enviado", "🟤 Execução", "🟢 Concluído", "🔴 Cancelado"]
                 status = st.selectbox(
                     "Status",
                     status_opts,
-                    index=status_opts.index(obra_atual["Status"])
-                    if obra_atual["Status"] in status_opts
-                    else 0,
+                    index=status_opts.index(normalize_status(obra_atual.get("Status"))) if normalize_status(obra_atual.get("Status")) in status_opts else 0
                 )
 
-                desc = st.text_area(
-                    "Descrição do serviço",
-                    value=str(obra_atual.get("Descricao", "")),
-                    height=130,
-                )
+                desc = st.text_area("Descrição do serviço", value=str(obra_atual.get("Descricao", "")), height=140)
 
-                cA, cB = st.columns(2)
-                dt_visita = cA.date_input("Data da visita", value=obra_atual["Data_Visita"])
-                dt_orc = cB.date_input(
-                    "Data do orçamento", value=obra_atual["Data_Orcamento"]
-                )
+                cA, cB, cC = st.columns(3)
+                dt_visita = cA.date_input("Data da visita", value=obra_atual.get("Data_Visita") or datetime.now().date())
+                dt_orc = cB.date_input("Data do orçamento", value=obra_atual.get("Data_Orcamento") or datetime.now().date())
+                dt_conc = cC.date_input("Previsão de conclusão", value=obra_atual.get("Data_Conclusao") or (datetime.now().date() + timedelta(days=30)))
 
-                dt_conc = st.date_input(
-                    "Previsão de conclusão", value=obra_atual["Data_Conclusao"]
-                )
-
-                # inputs BR (melhor no celular)
-                mo_txt = st.text_input("Mão de obra (R$)", value=fmt_brl_num(obra_atual.get("Custo_MO", 0.0)))
-                mat_txt = st.text_input("Materiais (R$)", value=fmt_brl_num(obra_atual.get("Custo_Material", 0.0)))
-
-                mo = parse_brl_num(mo_txt, 0.0)
-                mat = parse_brl_num(mat_txt, 0.0)
+                c1, c2, c3 = st.columns(3)
+                mo = c1.number_input("Mão de obra (R$)", min_value=0.0, step=10.0, value=float(obra_atual.get("Custo_MO", 0.0)), format="%.2f")
+                mat = c2.number_input("Materiais (R$)", min_value=0.0, step=10.0, value=float(obra_atual.get("Custo_Material", 0.0)), format="%.2f")
+                entrada = c3.number_input("Entrada (R$)", min_value=0.0, step=10.0, value=float(obra_atual.get("Entrada", 0.0)), format="%.2f")
 
                 total = mo + mat
-                st.info(f"Valor total: R$ {total:,.2f}")
+                st.info(f"Valor total: {br_money(total)}")
 
-                entrada_txt = st.text_input("Entrada (R$)", value=fmt_brl_num(obra_atual.get("Entrada", 0.0)))
-                entrada = parse_brl_num(entrada_txt, 0.0)
-
-                pago = st.checkbox(
-                    "Pagamento total recebido", value=bool(obra_atual["Pago"])
-                )
+                pago = st.checkbox("Pagamento total recebido", value=bool(obra_atual.get("Pago", False)))
 
                 salvar = st.form_submit_button("Salvar")
 
                 if salvar:
-                    # cria ID
+                    if df_obras is None or df_obras.empty:
+                        df_obras = pd.DataFrame(columns=[
+                            "ID", "Cliente", "Status", "Data_Contato", "Data_Visita", "Data_Orcamento", "Data_Aceite", "Data_Conclusao",
+                            "Custo_MO", "Custo_Material", "Total", "Entrada", "Pago", "Descricao"
+                        ])
+
                     if idx_obra == -1:
-                        novo_id = (df_obras["ID"].max() + 1) if (df_obras is not None and not df_obras.empty) else 1
+                        novo_id = int(df_obras["ID"].max()) + 1 if df_obras["ID"].notna().any() else 1
                     else:
-                        novo_id = obra_atual["ID"]
+                        novo_id = int(obra_atual["ID"])
 
                     dados_obra = {
                         "ID": novo_id,
@@ -615,12 +651,8 @@ elif menu == "🏗️ Gestão de Obras":
                         "Descricao": desc,
                     }
 
-                    if df_obras is None or df_obras.empty:
-                        df_obras = pd.DataFrame([dados_obra])
-                    elif idx_obra == -1:
-                        df_obras = pd.concat(
-                            [df_obras, pd.DataFrame([dados_obra])], ignore_index=True
-                        )
+                    if idx_obra == -1:
+                        df_obras = pd.concat([df_obras, pd.DataFrame([dados_obra])], ignore_index=True)
                     else:
                         for k, v in dados_obra.items():
                             df_obras.at[idx_obra, k] = v
@@ -631,67 +663,42 @@ elif menu == "🏗️ Gestão de Obras":
                     st.rerun()
 
             if idx_obra != -1:
-                st.subheader("Ações rápidas")
+                st.markdown("<div class='soft'>Ações rápidas</div>", unsafe_allow_html=True)
 
-                dados_cli = df_clientes[df_clientes["Nome"] == cli_selecionado].iloc[0]
-                endereco = dados_cli.get("Endereco", "")
+                dados_cli = df_clientes[df_clientes["Nome"].astype(str).str.strip() == cli_selecionado].iloc[0]
+                endereco = str(dados_cli.get("Endereco", "")).strip()
 
                 c1, c2 = st.columns(2)
                 hora_visita = c1.time_input("Hora", value=dtime(9, 0))
-                duracao = c2.number_input(
-                    "Duração (min)", min_value=15, max_value=480, value=60, step=15
-                )
+                duracao = c2.number_input("Duração (min)", min_value=15, max_value=480, value=60, step=15)
 
-                st.link_button(
-                    "📅 Agendar visita",
-                    link_calendar(
-                        f"Visita: {cli_selecionado}",
-                        dt_visita,
-                        hora_visita,
-                        duracao,
-                        endereco,
-                    ),
-                )
+                st.link_button("📅 Agendar visita", link_calendar(f"Visita: {cli_selecionado}", dt_visita, hora_visita, duracao, endereco))
                 st.link_button("📍 Ver endereço", link_maps(endereco))
 
-                pdf_orc = gerar_pdf(
-                    "Orçamento",
-                    {
-                        "Cliente": cli_selecionado,
-                        "Serviço": desc,
-                        "Mão de Obra": f"R$ {mo:,.2f}",
-                        "Materiais": f"R$ {mat:,.2f}",
-                        "TOTAL": f"R$ {total:,.2f}",
-                        "Data": dt_orc.strftime("%d/%m/%Y"),
-                    },
-                )
-                st.download_button(
-                    "📄 Baixar orçamento",
-                    data=pdf_orc,
-                    file_name=f"orcamento_{cli_selecionado}.pdf",
-                    mime="application/pdf",
-                )
+                pdf_orc = gerar_pdf("Orçamento", {
+                    "Cliente": cli_selecionado,
+                    "Serviço": desc,
+                    "Mão de Obra": br_money(mo),
+                    "Materiais": br_money(mat),
+                    "TOTAL": br_money(total),
+                    "Data": dt_orc.strftime("%d/%m/%Y"),
+                })
+                st.download_button("📄 Baixar orçamento", data=pdf_orc, file_name=f"orcamento_{cli_selecionado}.pdf", mime="application/pdf")
 
                 valor_recibo = total if pago else entrada
-                pdf_rec = gerar_pdf(
-                    "Recibo",
-                    {
-                        "Recebemos de": cli_selecionado,
-                        "Valor": f"R$ {valor_recibo:,.2f}",
-                        "Referente a": desc,
-                        "Data": datetime.now().strftime("%d/%m/%Y"),
-                    },
-                )
-                st.download_button(
-                    "🧾 Baixar recibo",
-                    data=pdf_rec,
-                    file_name=f"recibo_{cli_selecionado}.pdf",
-                    mime="application/pdf",
-                )
+                pdf_rec = gerar_pdf("Recibo", {
+                    "Recebemos de": cli_selecionado,
+                    "Valor": br_money(valor_recibo),
+                    "Referente a": desc,
+                    "Data": datetime.now().strftime("%d/%m/%Y"),
+                })
+                st.download_button("🧾 Baixar recibo", data=pdf_rec, file_name=f"recibo_{cli_selecionado}.pdf", mime="application/pdf")
 
-# ---------- IMPORTAR ----------
+# =========================
+# IMPORT / EXPORT
+# =========================
 elif menu == "📥 Importar/Exportar":
-    st.title("Importar / Exportar")
+    st.markdown("<div class='section-title'>Importar / Exportar</div>", unsafe_allow_html=True)
 
     st.subheader("Importar PDF antigo e converter")
     pdf_file = st.file_uploader("Upload de PDF", type="pdf")
@@ -708,30 +715,28 @@ elif menu == "📥 Importar/Exportar":
                 st.error("Não achei o nome do cliente no PDF.")
             else:
                 if st.button(f"Confirmar e cadastrar: {nome_cliente}"):
+                    nome_cliente = str(nome_cliente).strip()
+
                     # cliente
-                    if nome_cliente not in df_clientes["Nome"].values:
+                    if df_clientes.empty or (nome_cliente not in df_clientes["Nome"].astype(str).values):
                         novo_id_c = df_clientes["ID"].max() + 1 if not df_clientes.empty else 1
-                        df_clientes = pd.concat(
-                            [
-                                df_clientes,
-                                pd.DataFrame(
-                                    [
-                                        {
-                                            "ID": novo_id_c,
-                                            "Nome": nome_cliente,
-                                            "Telefone": "",
-                                            "Email": "",
-                                            "Endereco": "",
-                                            "Data_Cadastro": datetime.now().strftime("%Y-%m-%d"),
-                                        }
-                                    ]
-                                ),
-                            ],
-                            ignore_index=True,
-                        )
+                        df_clientes = pd.concat([df_clientes, pd.DataFrame([{
+                            "ID": novo_id_c,
+                            "Nome": nome_cliente,
+                            "Telefone": "",
+                            "Email": "",
+                            "Endereco": "",
+                            "Data_Cadastro": datetime.now().strftime("%Y-%m-%d"),
+                        }])], ignore_index=True)
 
                     # obra
-                    novo_id_o = df_obras["ID"].max() + 1 if (df_obras is not None and not df_obras.empty) else 1
+                    if df_obras is None or df_obras.empty:
+                        df_obras = pd.DataFrame(columns=[
+                            "ID", "Cliente", "Status", "Data_Contato", "Data_Visita", "Data_Orcamento", "Data_Aceite", "Data_Conclusao",
+                            "Custo_MO", "Custo_Material", "Total", "Entrada", "Pago", "Descricao"
+                        ])
+
+                    novo_id_o = int(df_obras["ID"].max()) + 1 if df_obras["ID"].notna().any() else 1
 
                     data_txt = dados_extraidos.get("Data")
                     data_obra = datetime.now().date()
@@ -759,14 +764,10 @@ elif menu == "📥 Importar/Exportar":
                         "Total": total_doc,
                         "Entrada": 0.0,
                         "Pago": False,
-                        "Descricao": desc_doc,
+                        "Descricao": str(desc_doc),
                     }
 
-                    if df_obras is None or df_obras.empty:
-                        df_obras = pd.DataFrame([nova_o])
-                    else:
-                        df_obras = pd.concat([df_obras, pd.DataFrame([nova_o])], ignore_index=True)
-
+                    df_obras = pd.concat([df_obras, pd.DataFrame([nova_o])], ignore_index=True)
                     df_obras = limpar_obras(df_obras)
                     save_data(df_clientes, df_obras)
                     st.success("Importado e convertido!")
@@ -778,17 +779,7 @@ elif menu == "📥 Importar/Exportar":
     c1, c2 = st.columns(2)
     with c1:
         st.subheader("Exportar clientes")
-        st.download_button(
-            "Baixar clientes (CSV)",
-            df_clientes.to_csv(index=False).encode("utf-8"),
-            "clientes_backup.csv",
-            "text/csv",
-        )
+        st.download_button("Baixar clientes (CSV)", df_clientes.to_csv(index=False).encode("utf-8"), "clientes_backup.csv", "text/csv")
     with c2:
         st.subheader("Exportar obras")
-        st.download_button(
-            "Baixar obras (CSV)",
-            df_obras.to_csv(index=False).encode("utf-8") if df_obras is not None else b"",
-            "obras_backup.csv",
-            "text/csv",
-        )
+        st.download_button("Baixar obras (CSV)", df_obras.to_csv(index=False).encode("utf-8"), "obras_backup.csv", "text/csv")
