@@ -20,7 +20,6 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-      /* Desktop padrão */
       .block-container { 
           padding-top: 3.5rem; 
           padding-bottom: 3rem; 
@@ -216,31 +215,60 @@ def normalizar_data_ddmmaa(data_txt: str) -> str:
     return data_txt
 
 def extrair_dados_pdf_solucao(text: str):
-    if not re.search(r"ORÇAMENTO", text, flags=re.IGNORECASE):
-        return None
-
+    # Tenta extrair mesmo que não ache a palavra "ORÇAMENTO" explicitamente no topo,
+    # mas procura padrões comuns.
+    
     dados = {}
+    
+    # Tenta achar cliente
     m = re.search(r"Cliente:\s*(.+)", text, flags=re.IGNORECASE)
     if m:
         dados["Cliente"] = m.group(1).strip()
+    else:
+        # Tenta achar "Recebemos de" se for recibo
+        m2 = re.search(r"Recebemos de:\s*(.+)", text, flags=re.IGNORECASE)
+        if m2:
+            dados["Cliente"] = m2.group(1).strip()
 
+    # Tenta achar data
     m = re.search(r"Criado em:\s*(\d{2}/\d{2}/\d{2,4})", text, flags=re.IGNORECASE)
     if m:
         dados["Data"] = normalizar_data_ddmmaa(m.group(1))
+    else:
+        # Tenta achar "Data:" genérica
+        m2 = re.search(r"Data:\s*(\d{2}/\d{2}/\d{2,4})", text, flags=re.IGNORECASE)
+        if m2:
+            dados["Data"] = normalizar_data_ddmmaa(m2.group(1))
 
+    # Tenta achar total
     m = re.search(r"Total:\s*R\$\s*([\d\.\,]+)", text, flags=re.IGNORECASE)
     if m:
-        try:
-            dados["Total"] = brl_to_float(m.group(1))
-        except:
-            pass
+        try: dados["Total"] = brl_to_float(m.group(1))
+        except: pass
+    else:
+        # Tenta achar "Valor:"
+        m2 = re.search(r"Valor:\s*R\$\s*([\d\.\,]+)", text, flags=re.IGNORECASE)
+        if m2:
+            try: dados["Total"] = brl_to_float(m2.group(1))
+            except: pass
 
-    m = re.search(r"Descrição:\s*(.*?)\s*Total:", text, flags=re.IGNORECASE | re.DOTALL)
+    # Tenta achar descrição
+    # Pega tudo entre "Descrição:" e "Total:" ou "Valor:"
+    m = re.search(r"Descrição:\s*(.*?)\s*(?:Total:|Valor:)", text, flags=re.IGNORECASE | re.DOTALL)
     if m:
         dados["Descricao"] = m.group(1).strip()
+    else:
+        # Se for recibo "Referente a:"
+        m2 = re.search(r"Referente a:\s*(.*?)\s*(?:Data:|Assinatura:)", text, flags=re.IGNORECASE | re.DOTALL)
+        if m2:
+            dados["Descricao"] = m2.group(1).strip()
 
-    if "Cliente" not in dados or "Total" not in dados:
-        return None
+    # Se faltar dados criticos
+    if "Cliente" not in dados: dados["Cliente"] = "Cliente Desconhecido"
+    if "Total" not in dados: dados["Total"] = 0.0
+    if "Descricao" not in dados: dados["Descricao"] = ""
+    if "Data" not in dados: dados["Data"] = datetime.now().strftime("%d/%m/%Y")
+
     return dados
 
 def extrair_dados_pdf(pdf_file):
@@ -349,32 +377,50 @@ if menu == "Dashboard":
         r_show["Pendente"] = r_show["Pendente"].apply(br_money)
         st.dataframe(r_show, use_container_width=True)
 
-# ---------- IMPORTAR / EXPORTAR ----------
+# ---------- IMPORTAR / EXPORTAR (COM VISUALIZAÇÃO) ----------
 elif menu == "Importar/Exportar":
     st.markdown("<div class='section-title'>Importar / Exportar</div>", unsafe_allow_html=True)
 
-    colA, colB = st.columns([1.2, 1])
+    st.markdown("<div class='card'>", unsafe_allow_html=True)
+    st.subheader("1) Upload e Importação Automática")
+    pdf_file = st.file_uploader("Selecione o arquivo PDF", type="pdf")
+    
+    if pdf_file:
+        # Se já extraiu, mantem na sessao, senao extrai
+        if "dados_pdf_cache" not in st.session_state or st.session_state.get("last_pdf") != pdf_file.name:
+            dados_brutos = extrair_dados_pdf(pdf_file)
+            st.session_state["dados_pdf_cache"] = dados_brutos
+            st.session_state["last_pdf"] = pdf_file.name
 
-    with colA:
-        st.markdown("<div class='card'>", unsafe_allow_html=True)
-        st.subheader("1) Upload e Importação")
-        pdf_file = st.file_uploader("Selecione o arquivo PDF", type="pdf")
-        
-        dados_pdf = None
-        if pdf_file:
-            dados_pdf = extrair_dados_pdf(pdf_file)
-            if dados_pdf:
-                st.success("✅ PDF lido com sucesso!")
-                st.json(dados_pdf)
+        dados_pdf = st.session_state["dados_pdf_cache"]
+
+        if dados_pdf:
+            st.success("✅ PDF lido com sucesso! Confira e edite os dados abaixo antes de salvar.")
+            
+            st.divider()
+            
+            # Formulario de Edição Imediata
+            with st.form("form_importacao"):
+                c_imp1, c_imp2 = st.columns(2)
                 
-                # BOTÃO DE SALVAR DE VERDADE
-                if st.button("💾 SALVAR DADOS NO SISTEMA"):
-                    nome_cli = dados_pdf["Cliente"]
-                    
-                    # 1. Cria cliente se não existir
+                imp_cliente = c_imp1.text_input("Nome do Cliente", value=dados_pdf.get("Cliente", ""))
+                
+                val_data = datetime.now().date()
+                if dados_pdf.get("Data"):
+                    try: val_data = datetime.strptime(dados_pdf["Data"], "%d/%m/%Y").date()
+                    except: pass
+                imp_data = c_imp2.date_input("Data do Orçamento", value=val_data)
+                
+                imp_total = st.number_input("Valor Total (R$)", value=float(dados_pdf.get("Total", 0.0)), step=10.0)
+                imp_desc = st.text_area("Descrição do Serviço", value=dados_pdf.get("Descricao", ""), height=100)
+                
+                btn_confirmar = st.form_submit_button("💾 CONFIRMAR E SALVAR NO SISTEMA")
+                
+                if btn_confirmar:
+                    # 1. Cria ou Atualiza Cliente
                     existe_cli = False
                     if not df_clientes.empty:
-                         if nome_cli in df_clientes["Nome"].astype(str).values:
+                         if imp_cliente in df_clientes["Nome"].astype(str).values:
                              existe_cli = True
                     
                     if not existe_cli:
@@ -384,31 +430,26 @@ elif menu == "Importar/Exportar":
                              except: pass
                          
                          novo_cliente = pd.DataFrame([{
-                             "ID": novo_id_cli, "Nome": nome_cli, "Telefone": "", "Email": "", "Endereco": "", 
+                             "ID": novo_id_cli, "Nome": imp_cliente, "Telefone": "", "Email": "", "Endereco": "", 
                              "Data_Cadastro": datetime.now().strftime("%Y-%m-%d")
                          }])
                          df_clientes = pd.concat([df_clientes, novo_cliente], ignore_index=True)
-                         st.toast(f"Cliente {nome_cli} criado!")
+                         st.toast(f"Novo cliente '{imp_cliente}' cadastrado!")
 
-                    # 2. Cria obra
+                    # 2. Cria Obra
                     novo_id_obra = 1
                     if not df_obras.empty:
                         try: novo_id_obra = int(df_obras["ID"].max()) + 1
                         except: pass
-                    
-                    data_orc = datetime.now().date()
-                    if dados_pdf.get("Data"):
-                        try: data_orc = datetime.strptime(dados_pdf["Data"], "%d/%m/%Y").date()
-                        except: pass
 
                     nova_obra = pd.DataFrame([{
                         "ID": novo_id_obra,
-                        "Cliente": nome_cli,
+                        "Cliente": imp_cliente,
                         "Status": "🟠 Orçamento Enviado",
-                        "Data_Orcamento": data_orc,
-                        "Data_Visita": data_orc,
-                        "Total": dados_pdf["Total"],
-                        "Descricao": dados_pdf["Descricao"],
+                        "Data_Orcamento": imp_data,
+                        "Data_Visita": imp_data,
+                        "Total": imp_total,
+                        "Descricao": imp_desc,
                         "Custo_MO": 0.0, "Custo_Material": 0.0, "Entrada": 0.0, "Pago": False
                     }])
                     
@@ -416,33 +457,40 @@ elif menu == "Importar/Exportar":
                     df_obras = limpar_obras(df_obras)
                     save_data(df_clientes, df_obras)
                     
-                    st.success("✅ Importação salva com sucesso! Pode verificar na aba Dashboard ou Clientes.")
+                    st.success("✅ Importação concluída! Os dados foram salvos.")
                     st.balloons()
-            else:
-                st.error("Não foi possível ler os dados deste PDF.")
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    with colB:
-        st.markdown("<div class='card'>", unsafe_allow_html=True)
-        st.subheader("3) Ações Rápidas (Calendar/Maps)")
-        
-        if 'dados_pdf' in locals() and dados_pdf and dados_pdf.get("Cliente"):
-            d_visita = st.date_input("Data da Visita", value=datetime.now().date())
-            h_visita = st.time_input("Hora", value=dtime(9, 0))
-            duracao = st.number_input("Duração (min)", min_value=15, value=60, step=15)
-            local_visita = st.text_input("Endereço (opcional)", value="")
-            
-            titulo_evento = f"Visita: {dados_pdf['Cliente']}"
-            link_cal = link_calendar(titulo_evento, d_visita, h_visita, duracao, local_visita)
-            
-            st.markdown(f"[📅 Criar Evento no Google Calendar]({link_cal})", unsafe_allow_html=True)
-            
-            if local_visita:
-                link_map = link_maps(local_visita)
-                st.markdown(f"[📍 Abrir no Google Maps]({link_map})", unsafe_allow_html=True)
+                    
+                    # Limpa cache pra nao duplicar sem querer
+                    del st.session_state["dados_pdf_cache"]
+                    
         else:
-            st.info("Carregue um PDF válido para usar essas ferramentas.")
-        st.markdown("</div>", unsafe_allow_html=True)
+            st.error("Não consegui ler dados úteis deste PDF (Cliente/Total).")
+            
+    st.markdown("</div>", unsafe_allow_html=True)
+    
+    # Ferramentas Extras
+    if pdf_file and "dados_pdf_cache" in st.session_state:
+        # Pega os dados que estão na tela (pode não estar salvos ainda, mas serve pro calendar)
+        # Usamos o cache aqui
+        d_cache = st.session_state["dados_pdf_cache"]
+        
+        st.write("")
+        colB1, colB2 = st.columns(2)
+        with colB1:
+            st.markdown("<div class='card'>", unsafe_allow_html=True)
+            st.subheader("Google Calendar")
+            titulo_evento = f"Visita: {d_cache.get('Cliente', 'Cliente')}"
+            link_cal = link_calendar(titulo_evento, datetime.now().date(), dtime(9,0), 60, "")
+            st.markdown(f"[📅 Criar Evento]({link_cal})", unsafe_allow_html=True)
+            st.markdown("</div>", unsafe_allow_html=True)
+            
+        with colB2:
+            st.markdown("<div class='card'>", unsafe_allow_html=True)
+            st.subheader("Google Maps")
+            end_mapa = st.text_input("Endereço", value="")
+            if end_mapa:
+                st.markdown(f"[📍 Abrir Mapa]({link_maps(end_mapa)})", unsafe_allow_html=True)
+            st.markdown("</div>", unsafe_allow_html=True)
 
 # ---------- CLIENTES ----------
 elif menu == "Clientes":
