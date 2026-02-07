@@ -1,252 +1,153 @@
 import streamlit as st
+from streamlit_gsheets import GSheetsConnection
 import pandas as pd
-from datetime import datetime, date
-import os
-import re
-import pdfplumber
+from fpdf import FPDF
+from datetime import datetime
 
 # =====================================
-# CONFIGURAÇÃO INICIAL
+# 1. DADOS OFICIAIS DA SUA EMPRESA
 # =====================================
-st.set_page_config(
-    page_title="ObraGestor Pro",
-    page_icon="🏗️",
-    layout="wide",
-    initial_sidebar_state="collapsed"
-)
+EMPRESA = {
+    "nome": "Solução Reforma e Construção",
+    "responsavel": "Antônio Francisco Carvalho Silva",
+    "cnpj": "46.580.382/0001-70",
+    "endereco": "Rua Bandeirantes, 1303, Pedra Mole, Teresina-PI",
+    "telefone": "(86) 9.9813-2225",
+    "email": "solucoesreformaseconstrucao@gmail.com"
+}
 
+# =====================================
+# 2. CONFIGURAÇÃO DA PÁGINA E CONEXÃO
+# =====================================
+st.set_page_config(page_title="Solução Gestão", page_icon="🏗️", layout="wide")
+
+# Estilo para ficar "bonito" e profissional
 st.markdown("""
     <style>
-        .block-container { padding-top: 1rem; padding-bottom: 2rem; }
-        .stButton > button { width: 100%; height: 3em; font-size: 1.1em; }
-        h1, h2, h3 { color: #2c3e50; }
+    .main { background-color: #f5f7f9; }
+    .stButton>button { width: 100%; background-color: #1b3644; color: white; }
+    .stDownloadButton>button { width: 100%; background-color: #28a745; color: white; }
     </style>
-""", unsafe_allow_html=True)
+    """, unsafe_allow_html=True)
+
+# Conecta com sua planilha do Google
+conn = st.connection("gsheets", type=GSheetsConnection)
 
 # =====================================
-# PASTA DE DADOS (essencial para Streamlit Cloud / hospedagem)
+# 3. GERADOR DE PDF PROFISSIONAL
 # =====================================
-DATA_DIR = "data"
-os.makedirs(DATA_DIR, exist_ok=True)
+class PDF_Solucao(FPDF):
+    def header(self):
+        # Tenta carregar sua logo se você subir logo.png pro GitHub
+        try: self.image('logo.png', 10, 8, 30)
+        except: pass
+        
+        self.set_font('Arial', 'B', 15)
+        self.set_text_color(27, 54, 68)
+        self.cell(0, 8, EMPRESA["nome"], ln=True, align='R')
+        self.set_font('Arial', '', 9)
+        self.cell(0, 5, f"CNPJ: {EMPRESA['cnpj']}", ln=True, align='R')
+        self.cell(0, 5, EMPRESA["endereco"], ln=True, align='R')
+        self.cell(0, 5, f"Contato: {EMPRESA['telefone']}", ln=True, align='R')
+        self.ln(10)
+        self.line(10, self.get_y(), 200, self.get_y())
+        self.ln(10)
 
-CLIENTES_FILE = os.path.join(DATA_DIR, "clientes.csv")
-OBRAS_FILE    = os.path.join(DATA_DIR, "obras.csv")
+def gerar_pdf(cliente, servico, valor, p_entrada):
+    pdf = PDF_Solucao()
+    pdf.add_page()
+    
+    # Título do Orçamento
+    pdf.set_font('Arial', 'B', 14)
+    pdf.cell(0, 10, f"ORÇAMENTO DE SERVIÇOS", ln=True, align='C')
+    pdf.ln(5)
+    
+    # Dados do Cliente
+    pdf.set_font('Arial', 'B', 11)
+    pdf.cell(0, 10, f"CLIENTE: {cliente.upper()}", border='B', ln=True)
+    pdf.set_font('Arial', '', 11)
+    pdf.ln(5)
+    
+    # Descrição
+    pdf.set_font('Arial', 'B', 10)
+    pdf.cell(0, 7, "DESCRIÇÃO DOS SERVIÇOS:", ln=True)
+    pdf.set_font('Arial', '', 11)
+    pdf.multi_cell(0, 7, servico)
+    pdf.ln(10)
+    
+    # Valores
+    pdf.set_fill_color(240, 240, 240)
+    pdf.set_font('Arial', 'B', 12)
+    pdf.cell(130, 12, "TOTAL DA MÃO DE OBRA", 1, 0, 'L', True)
+    pdf.cell(60, 12, f"R$ {valor:,.2f}", 1, 1, 'C', True)
+    
+    if p_entrada > 0:
+        v_entrada = valor * (p_entrada / 100)
+        pdf.set_font('Arial', 'I', 10)
+        pdf.set_text_color(150, 0, 0)
+        pdf.cell(0, 10, f"* Condição de pagamento: {p_entrada}% de entrada (R$ {v_entrada:,.2f})", ln=True)
+    
+    return pdf.output(dest='S').encode('latin1')
 
 # =====================================
-# CARREGAR / SALVAR DADOS
+# 4. INTERFACE DO USUÁRIO
 # =====================================
-@st.cache_data(ttl=300)  # cache de 5 minutos
-def load_data():
-    try:
-        # Clientes
-        if not os.path.exists(CLIENTES_FILE):
-            df_c = pd.DataFrame(columns=["ID", "Nome", "Telefone", "Email", "Endereco", "Data_Cadastro"])
-            df_c.to_csv(CLIENTES_FILE, index=False)
+st.title("🏗️ Solução Reforma & Construção")
+st.write(f"Bem-vindo, **{EMPRESA['responsavel']}**")
+
+aba1, aba2 = st.tabs(["📝 Novo Orçamento", "📊 Histórico de Obras"])
+
+with aba1:
+    with st.form("form_orcamento", clear_on_submit=False):
+        c1, c2 = st.columns([2, 1])
+        nome_cliente = c1.text_input("Nome do Cliente")
+        data_hoje = c2.date_input("Data", datetime.now())
+        
+        desc_servico = st.text_area("O que será feito? (Descreva detalhadamente)", height=150)
+        
+        c3, c4 = st.columns(2)
+        v_total = c3.number_input("Valor da Mão de Obra (R$)", min_value=0.0, step=50.0)
+        porc_entrada = c4.slider("% de Entrada Requerida", 0, 100, 65)
+        
+        btn_salvar = st.form_submit_button("SALVAR NA PLANILHA E GERAR PDF")
+
+    if btn_salvar:
+        if nome_cliente and v_total > 0:
+            try:
+                # Salva no Google Sheets
+                df_existente = conn.read()
+                novo_registro = pd.DataFrame([{
+                    "Data": data_hoje.strftime("%d/%m/%Y"),
+                    "Cliente": nome_cliente,
+                    "Serviço": desc_servico,
+                    "Valor Total": v_total,
+                    "Entrada %": porc_entrada
+                }])
+                df_atualizado = pd.concat([df_existente, novo_registro], ignore_index=True)
+                conn.update(data=df_atualizado)
+                
+                # Gera o PDF
+                pdf_res = gerar_pdf(nome_cliente, desc_servico, v_total, porc_entrada)
+                
+                st.success("✅ Tudo pronto! Os dados já estão na sua planilha.")
+                st.download_button(
+                    label="⬇️ BAIXAR ORÇAMENTO (PDF)",
+                    data=pdf_res,
+                    file_name=f"Orcamento_{nome_cliente}.pdf",
+                    mime="application/pdf"
+                )
+            except Exception as e:
+                st.error(f"Erro ao conectar com a planilha: {e}")
         else:
-            df_c = pd.read_csv(CLIENTES_FILE)
+            st.warning("Preencha o nome do cliente e o valor para continuar.")
 
-        # Obras
-        if not os.path.exists(OBRAS_FILE):
-            cols = [
-                "ID", "Cliente", "Status", "Data_Contato", "Data_Visita", "Data_Orcamento",
-                "Data_Aceite", "Data_Conclusao", "Custo_MO", "Custo_Material", "Total",
-                "Entrada", "Pago", "Descricao", "Numero_Orcamento"
-            ]
-            df_o = pd.DataFrame(columns=cols)
-            df_o.to_csv(OBRAS_FILE, index=False)
-        else:
-            df_o = pd.read_csv(OBRAS_FILE)
-
-        # Tratamento de tipos
-        date_cols = ["Data_Contato", "Data_Visita", "Data_Orcamento", "Data_Aceite", "Data_Conclusao"]
-        for col in date_cols:
-            if col in df_o.columns:
-                df_o[col] = pd.to_datetime(df_o[col], errors="coerce")
-
-        numeric_cols = ["Custo_MO", "Custo_Material", "Total", "Entrada"]
-        for col in numeric_cols:
-            if col in df_o.columns:
-                df_o[col] = pd.to_numeric(df_o[col], errors="coerce").fillna(0.0)
-
-        if "Pago" in df_o.columns:
-            df_o["Pago"] = df_o["Pago"].fillna(False).astype(bool)
-
-        # Garante colunas mínimas
-        for col, default in [("Descricao", ""), ("Numero_Orcamento", ""), ("Entrada", 0.0), ("Pago", False)]:
-            if col not in df_o.columns:
-                df_o[col] = default
-
-        return df_c, df_o
-
-    except Exception as e:
-        st.error(f"Erro grave ao carregar dados: {str(e)}")
-        st.stop()
-
-def save_data(df_c, df_o):
+with aba2:
+    st.subheader("Registros da Planilha Google")
+    if st.button("🔄 Atualizar Lista"):
+        st.cache_data.clear()
+    
     try:
-        df_c.to_csv(CLIENTES_FILE, index=False)
-        df_o.to_csv(OBRAS_FILE, index=False)
-    except Exception as e:
-        st.error(f"Erro ao salvar dados: {str(e)}")
-
-# Carrega uma vez
-if "df_clientes" not in st.session_state or "df_obras" not in st.session_state:
-    st.session_state.df_clientes, st.session_state.df_obras = load_data()
-
-df_clientes = st.session_state.df_clientes
-df_obras    = st.session_state.df_obras
-
-# =====================================
-# FUNÇÕES AUXILIARES - PDF
-# =====================================
-def extrair_texto_pdf(pdf_file):
-    try:
-        with pdfplumber.open(pdf_file) as pdf:
-            texto = []
-            for page in pdf.pages:
-                t = page.extract_text()
-                if t:
-                    texto.append(t)
-            return "\n".join(texto).strip()
-    except Exception as e:
-        st.error(f"Erro ao ler PDF: {e}")
-        return ""
-
-def brl_to_float(valor_txt):
-    try:
-        v = str(valor_txt).strip().replace("R$", "").strip()
-        v = v.replace(".", "").replace(",", ".")
-        return float(v)
+        dados_planilha = conn.read()
+        st.dataframe(dados_planilha, use_container_width=True)
     except:
-        return 0.0
-
-def normalizar_data(data_txt):
-    data_txt = str(data_txt).strip()
-    patterns = [
-        r"%d/%m/%Y",
-        r"%d/%m/%y",
-        r"%Y-%m-%d"
-    ]
-    for fmt in patterns:
-        try:
-            dt = datetime.strptime(data_txt, fmt)
-            return dt.date()
-        except:
-            pass
-    return None
-
-def extrair_dados_pdf_solucao(texto: str):
-    if not re.search(r"ORÇAMENTO", texto, re.IGNORECASE):
-        return None
-
-    dados = {
-        "tipo": "Orçamento",
-        "Cliente": "",
-        "Numero": "",
-        "Data": None,
-        "TOTAL": 0.0,
-        "Descricao": ""
-    }
-
-    # Cliente
-    m = re.search(r"Cliente:\s*(.+?)(?:\n|$)", texto, re.I | re.M)
-    if m:
-        dados["Cliente"] = m.group(1).strip()
-
-    # Número do orçamento
-    m = re.search(r"ORÇAMENTO\s*[Nº°]?\s*:\s*(\d+)", texto, re.I)
-    if m:
-        dados["Numero"] = m.group(1).strip()
-
-    # Data
-    m = re.search(r"Criado em:\s*(\d{2}/\d{2}/\d{2,4})", texto, re.I)
-    if m:
-        dados["Data"] = normalizar_data(m.group(1))
-
-    # Total
-    m = re.search(r"Total:\s*R\$\s*([\d\.\, ]+)", texto, re.I)
-    if m:
-        dados["TOTAL"] = brl_to_float(m.group(1))
-
-    # Descrição (até Total ou fim)
-    m = re.search(r"Descrição:\s*(.+?)(?=Total:|Venda:|Condições:|Obs:|\Z)", texto, re.I | re.DOTALL | re.M)
-    if m:
-        desc = m.group(1).strip()
-        desc = re.sub(r"\s+", " ", desc)  # limpa espaços extras
-        dados["Descricao"] = desc
-
-    return dados
-
-# =====================================
-# INTERFACE PRINCIPAL
-# =====================================
-st.title("🏗️ ObraGestor Pro")
-st.markdown("Gestão simples de clientes e obras")
-
-tab1, tab2, tab3 = st.tabs(["📄 Importar Orçamento PDF", "👥 Clientes", "🛠️ Obras"])
-
-with tab1:
-    st.subheader("Importar orçamento em PDF (formato Solução Reforma e Construção)")
-
-    uploaded_file = st.file_uploader("Escolha o PDF do orçamento", type=["pdf"])
-
-    if uploaded_file is not None:
-        with st.spinner("Extraindo informações do PDF..."):
-            texto = extrair_texto_pdf(uploaded_file)
-            dados_extraidos = extrair_dados_pdf_solucao(texto)
-
-        if dados_extraidos:
-            st.success("Dados extraídos com sucesso!")
-            st.json(dados_extraidos)
-
-            col1, col2 = st.columns(2)
-            with col1:
-                cliente_nome = st.text_input("Cliente", value=dados_extraidos["Cliente"])
-            with col2:
-                valor_total = st.number_input("Valor Total (R$)", value=dados_extraidos["TOTAL"], step=100.0)
-
-            descricao = st.text_area("Descrição do serviço", value=dados_extraidos["Descricao"], height=150)
-            data_orc = st.date_input("Data do Orçamento", value=dados_extraidos["Data"] or date.today())
-
-            if st.button("Cadastrar Obra a partir deste orçamento", type="primary"):
-                novo_id = len(df_obras) + 1
-                nova_obra = {
-                    "ID": novo_id,
-                    "Cliente": cliente_nome,
-                    "Status": "Orçado",
-                    "Data_Contato": date.today(),
-                    "Data_Visita": None,
-                    "Data_Orcamento": data_orc,
-                    "Data_Aceite": None,
-                    "Data_Conclusao": None,
-                    "Custo_MO": 0.0,
-                    "Custo_Material": 0.0,
-                    "Total": valor_total,
-                    "Entrada": 0.0,
-                    "Pago": False,
-                    "Descricao": descricao,
-                    "Numero_Orcamento": dados_extraidos["Numero"]
-                }
-
-                df_obras = pd.concat([df_obras, pd.DataFrame([nova_obra])], ignore_index=True)
-                save_data(df_clientes, df_obras)
-                st.session_state.df_obras = df_obras
-                st.success(f"Obra cadastrada com sucesso! ID: {novo_id}")
-        else:
-            st.warning("Não foi possível identificar um orçamento válido neste PDF.")
-
-with tab2:
-    st.subheader("Clientes cadastrados")
-    st.dataframe(df_clientes)
-
-with tab3:
-    st.subheader("Obras cadastradas")
-    st.dataframe(df_obras)
-
-# Botão de debug / salvar manual
-if st.sidebar.button("Forçar salvamento dos dados"):
-    save_data(df_clientes, df_obras)
-    st.sidebar.success("Dados salvos manualmente!")
-
-st.sidebar.markdown("---")
-st.sidebar.info("Versão 0.1 – Ainda em desenvolvimento")
+        st.info("Aguardando conexão com a planilha...")
