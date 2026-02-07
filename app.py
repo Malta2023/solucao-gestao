@@ -127,7 +127,7 @@ def load_data():
 
     df_o["Pago"] = df_o["Pago"].astype(str).str.strip().str.lower().isin(["true", "1", "yes", "sim"])
 
-    # Garante que Data_Contato seja datetime
+    # Garante conversão segura de datas
     for col in ["Data_Visita", "Data_Orcamento", "Data_Conclusao", "Data_Contato"]:
         df_o[col] = pd.to_datetime(df_o[col], errors="coerce").dt.date
 
@@ -319,16 +319,16 @@ if menu == "Dashboard":
     st.write("")
     if not df_obras.empty:
         hoje = datetime.now().date()
-        # Filtra quem tem data de contato definida e não está concluído/cancelado
         df_contatos = df_obras[
             (df_obras["Data_Contato"].notnull()) & 
             (~df_obras["Status"].isin(["🟢 Concluído", "🔴 Cancelado"]))
         ].copy()
         
-        # Converte para comparar
         df_contatos["Data_Contato_dt"] = pd.to_datetime(df_contatos["Data_Contato"], errors='coerce').dt.date
         
         # Filtra próximos 7 dias ou atrasados
+        # Correção importante: remove NaT antes de filtrar
+        df_contatos = df_contatos[df_contatos["Data_Contato_dt"].notna()]
         pendentes = df_contatos[df_contatos["Data_Contato_dt"] <= hoje + timedelta(days=7)].sort_values("Data_Contato_dt")
         
         if not pendentes.empty:
@@ -569,7 +569,13 @@ elif menu == "Gestão de Obras":
                     col_act1, col_act2 = st.columns(2)
                     
                     with col_act1:
-                        d_visita_dt = pd.to_datetime(dados_obra["Data_Visita"]).date() if pd.notnull(dados_obra["Data_Visita"]) else datetime.now().date()
+                        # Tratamento seguro de Data_Visita
+                        raw_visita = dados_obra.get("Data_Visita")
+                        d_visita_dt = datetime.now().date()
+                        if pd.notnull(raw_visita):
+                            try: d_visita_dt = pd.to_datetime(raw_visita).date()
+                            except: pass
+                            
                         link_cal = link_calendar(f"Visita: {cli_sel}", d_visita_dt, dtime(9,0), 60, end_cliente)
                         st.markdown(f'''<a href="{link_cal}" target="_blank" style="text-decoration:none;"><button style="width:100%; padding:0.5rem; background-color:#E8F0FE; color:#1967D2; border:1px solid #1967D2; border-radius:8px; cursor:pointer;">📅 Agendar Visita no Google</button></a>''', unsafe_allow_html=True)
                     
@@ -585,11 +591,18 @@ elif menu == "Gestão de Obras":
                     status = st.selectbox("Status", ["🔵 Agendamento", "🟠 Orçamento Enviado", "🟤 Execução", "🟢 Concluído", "🔴 Cancelado"], index=["🔵 Agendamento", "🟠 Orçamento Enviado", "🟤 Execução", "🟢 Concluído", "🔴 Cancelado"].index(normalize_status(dados_obra["Status"])))
                     desc = st.text_area("Descrição", value=str(dados_obra["Descricao"]))
                     
-                    # Datas de Acompanhamento
+                    # Datas de Acompanhamento (Tratamento seguro contra NaT)
                     c_date1, c_date2, c_date3 = st.columns(3)
-                    d_visita = c_date1.date_input("Data Visita", value=pd.to_datetime(dados_obra["Data_Visita"]).date() if pd.notnull(dados_obra["Data_Visita"]) else datetime.now().date())
-                    d_orc = c_date2.date_input("Data Orçamento", value=pd.to_datetime(dados_obra["Data_Orcamento"]).date() if pd.notnull(dados_obra["Data_Orcamento"]) else datetime.now().date())
-                    d_contato = c_date3.date_input("Próximo Contato/Ligar", value=pd.to_datetime(dados_obra.get("Data_Contato", datetime.now().date())).date())
+                    
+                    # Funcao auxiliar para limpar datas
+                    def clean_dt(val):
+                        if pd.isnull(val): return datetime.now().date()
+                        try: return pd.to_datetime(val).date()
+                        except: return datetime.now().date()
+
+                    d_visita = c_date1.date_input("Data Visita", value=clean_dt(dados_obra.get("Data_Visita")))
+                    d_orc = c_date2.date_input("Data Orçamento", value=clean_dt(dados_obra.get("Data_Orcamento")))
+                    d_contato = c_date3.date_input("Próximo Contato/Ligar", value=clean_dt(dados_obra.get("Data_Contato")))
                     
                     c3, c4, c5 = st.columns(3)
                     val_mo = float(dados_obra["Custo_MO"]); val_mat = float(dados_obra["Custo_Material"]); val_tot = float(dados_obra.get("Total", 0.0))
