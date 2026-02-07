@@ -64,22 +64,19 @@ def link_maps(endereco):
     return "https://www.google.com/maps/search/?api=1&query=" + urllib.parse.quote(str(endereco))
 
 def link_calendar(titulo, data_visita, hora_visita, duracao_min, local):
-    try:
-        inicio_dt = datetime.combine(data_visita, hora_visita)
-        fim_dt = inicio_dt + timedelta(minutes=int(duracao_min))
-        start = inicio_dt.strftime("%Y%m%dT%H%M%S")
-        end = fim_dt.strftime("%Y%m%dT%H%M%S")
-        base = "https://calendar.google.com/calendar/render?action=TEMPLATE"
-        return (
-            f"{base}"
-            f"&text={urllib.parse.quote(titulo)}"
-            f"&dates={start}/{end}"
-            f"&details={urllib.parse.quote('Visita Técnica')}"
-            f"&location={urllib.parse.quote(str(local))}"
-            f"&ctz=America/Sao_Paulo"
-        )
-    except Exception:
-        return "#"
+    inicio_dt = datetime.combine(data_visita, hora_visita)
+    fim_dt = inicio_dt + timedelta(minutes=int(duracao_min))
+    start = inicio_dt.strftime("%Y%m%dT%H%M%S")
+    end = fim_dt.strftime("%Y%m%dT%H%M%S")
+    base = "https://calendar.google.com/calendar/render?action=TEMPLATE"
+    return (
+        f"{base}"
+        f"&text={urllib.parse.quote(titulo)}"
+        f"&dates={start}/{end}"
+        f"&details={urllib.parse.quote('Visita Técnica')}"
+        f"&location={urllib.parse.quote(str(local))}"
+        f"&ctz=America/Sao_Paulo"
+    )
 
 # =========================
 # LOAD/SAVE
@@ -141,61 +138,4 @@ def limpar_obras(df):
     df["ID"] = pd.to_numeric(df["ID"], errors="coerce")
     df["_sig"] = df.apply(assinatura_obra, axis=1)
 
-    max_id = int(df["ID"].max()) if df["ID"].notna().any() else 0
-    for i in df.index[df["ID"].isna()].tolist():
-        max_id += 1
-        df.at[i, "ID"] = max_id
-
-    df["ID"] = df["ID"].astype(int)
-    df = df.drop_duplicates(subset=["ID"], keep="last")
-
-    df["_dt"] = pd.to_datetime(df["Data_Orcamento"], errors="coerce")
-    df = df.sort_values(["_sig", "_dt"]).drop_duplicates(subset=["_sig"], keep="last")
-    df = df.drop(columns=["_sig", "_dt"])
-    return df.reset_index(drop=True)
-
-# =========================
-# PDF
-# =========================
-def extrair_texto_pdf(pdf_file) -> str:
-    with pdfplumber.open(pdf_file) as pdf:
-        partes = []
-        for page in pdf.pages:
-            t = page.extract_text()
-            if t:
-                partes.append(t)
-        return "\n".join(partes).strip()
-
-def brl_to_float(valor_txt: str) -> float:
-    v = str(valor_txt).strip().replace("R$", "").strip()
-    v = v.replace(".", "").replace(",", ".")
-    return float(v)
-
-def normalizar_data_ddmmaa(data_txt: str) -> str:
-    data_txt = str(data_txt).strip()
-    try:
-        if re.search(r"\\d{2}/\\d{2}/\\d{2}$", data_txt):
-            return datetime.strptime(data_txt, "%d/%m/%y").strftime("%d/%m/%Y")
-        if re.search(r"\\d{2}/\\d{2}/\\d{4}$", data_txt):
-            return data_txt
-    except Exception:
-        pass
-    return data_txt
-
-def extrair_dados_pdf_solucao(text: str):
-    if not re.search(r"ORÇAMENTO", text, flags=re.IGNORECASE):
-        return None
-
-    dados = {}
-    m = re.search(r"Cliente:\\s*(.+)", text, flags=re.IGNORECASE)
-    if m:
-        dados["Cliente"] = m.group(1).strip()
-
-    m = re.search(r"Criado em:\\s*(\\d{2}/\\d{2}/\\d{2,4})", text, flags=re.IGNORECASE)
-    if m:
-        dados["Data"] = normalizar_data_ddmmaa(m.group(1))
-
-    m = re.search(r"Total:\\s*R\\$\\s*([\\d\\.\\,]+)", text, flags=re.IGNORECASE)
-    if m:
-        try:
-            dados["Total"] = br
+    max_id = int(df["ID"].max()) if df["ID"].notna().any() 
