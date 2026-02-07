@@ -1,6 +1,5 @@
 streamlit
-pandas
 fpdf2
-pdfplumber
+st-gsheets-connection
 
 
