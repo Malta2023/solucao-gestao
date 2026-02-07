@@ -110,7 +110,7 @@ def gerar_pdf(tipo, dados):
 
 def link_maps(endereco):
     base = "https://www.google.com/maps/search/?api=1&query="
-    return base + urllib.parse.quote(str(endereco))
+    return base + urllib.parse.quote(str(endereco ))
 
 def link_calendar(titulo, data_str, local):
     try:
@@ -118,7 +118,7 @@ def link_calendar(titulo, data_str, local):
         start = dt.strftime("%Y%m%dT090000Z")
         end = dt.strftime("%Y%m%dT100000Z")
         base = "https://calendar.google.com/calendar/render?action=TEMPLATE"
-        details = f"&text={urllib.parse.quote(titulo)}&dates={start}/{end}&details=Visita+Tecnica&location={urllib.parse.quote(str(local))}"
+        details = f"&text={urllib.parse.quote(titulo )}&dates={start}/{end}&details=Visita+Tecnica&location={urllib.parse.quote(str(local))}"
         return base + details
     except:
         return "#"
