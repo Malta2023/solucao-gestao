@@ -16,7 +16,6 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# CSS OTIMIZADO
 st.markdown(
     """
     <style>
@@ -84,13 +83,6 @@ def normalize_status(s):
     if s == "" or s.lower() == "nan":
         return "🔵 Agendamento"
     return s
-
-def assinatura_obra(row):
-    c = str(row.get("Cliente", "")).strip().lower()
-    d = str(row.get("Descricao", "")).strip().lower()
-    dt = str(row.get("Data_Orcamento", "")).strip()
-    t = str(row.get("Total", "")).strip()
-    return f"{c}||{d}||{dt}||{t}"
 
 def link_maps(endereco):
     return "https://www.google.com/maps/search/?api=1&query=" + urllib.parse.quote(str(endereco))
@@ -188,11 +180,8 @@ def extrair_texto_pdf(pdf_file) -> str:
 def brl_to_float(valor_txt: str) -> float:
     s = str(valor_txt or "").strip()
     s = s.replace("\xa0", " ").replace("R$", "").strip()
-    # Mantém digitos, ponto, virgula
     s = re.sub(r"[^0-9\.,]", "", s)
     if not s: return 0.0
-    
-    # Se tiver virgula, assume padrao BR: 1.000,00 -> 1000.00
     if "," in s:
         s = s.replace(".", "").replace(",", ".")
     return float(s)
@@ -208,35 +197,28 @@ def normalizar_data_ddmmaa(data_txt: str) -> str:
     return data_txt
 
 # =========================
-# LÓGICA DE EXTRAÇÃO CORRIGIDA (VERSÃO FINAL)
+# LÓGICA DE EXTRAÇÃO
 # =========================
 def extrair_dados_pdf_solucao(text: str):
     text = (text or "").replace("\r", "")
     linhas = [l.strip() for l in text.split("\n") if l.strip()]
 
     dados = {}
-
-    # 1. CLIENTE
     m = re.search(r"(?:Cliente|Para|Sr\(a\)|Nome):\s*(.+)", text, flags=re.IGNORECASE)
     if m: dados["Cliente"] = m.group(1).strip()
     else: dados["Cliente"] = "Cliente Novo"
 
-    # 2. DATA
     m = re.search(r"Criado em:\s*(\d{2}/\d{2}/\d{2,4})", text, flags=re.IGNORECASE)
     if not m: m = re.search(r"(\d{2}/\d{2}/\d{2,4})", text)
     if m: dados["Data"] = normalizar_data_ddmmaa(m.group(1))
     else: dados["Data"] = datetime.now().strftime("%d/%m/%Y")
 
-    # 3. TOTAL (Tenta achar "Total:" primeiro, senão busca o maior valor solto)
     total = None
-    
-    # Busca explícita por "Total: ..."
     m = re.search(r"Total:\s*(?:R\$\s*)?([\d\.\,]+)", text, flags=re.IGNORECASE)
     if m:
         try: total = brl_to_float(m.group(1))
         except: pass
-        
-    # Se não achou "Total:", cata todos os valores monetários e pega o maior
+    
     if total is None or total == 0:
         achados = re.findall(r"(?:R\$\s*)?(\d{1,3}(?:\.\d{3})*,\d{2})", text)
         vals = []
@@ -247,7 +229,6 @@ def extrair_dados_pdf_solucao(text: str):
 
     dados["Total"] = float(total) if total is not None else 0.0
 
-    # 4. DESCRIÇÃO (Filtro Anti-Cabeçalho)
     ignore_list = [
         "solução reforma", "antônio francisco", "rua bandeirantes",
         "pedra mole", "contato:", "orçamento", "criado em",
@@ -259,37 +240,22 @@ def extrair_dados_pdf_solucao(text: str):
 
     for l in linhas:
         low = l.lower()
-
-        # Gatilho para começar a pegar descrição
         if low.startswith("descrição"):
             capturar = True
-            # Se a linha for "Descrição: Troca de telha", pega o "Troca de telha"
             if ":" in l:
                 resto = l.split(":", 1)[1].strip()
-                # Só pega se o resto não for "Valor" ou vazio
-                if resto and "valor" not in resto.lower():
-                    desc.append(resto)
+                if resto and "valor" not in resto.lower(): desc.append(resto)
             continue
 
         if capturar:
-            # Gatilhos de parada
             if low.startswith("total"): break
-            
-            # Filtros de ruído
             if low.startswith("valor"): continue
             if any(bad in low for bad in ignore_list): continue
-            
-            # Ignora linhas que são só números (ex: "3.467,00")
-            if re.fullmatch(r"[R$\s]*\d{1,3}(?:\.\d{3})*,\d{2}", l.strip()):
-                continue
-                
+            if re.fullmatch(r"[R$\s]*\d{1,3}(?:\.\d{3})*,\d{2}", l.strip()): continue
             desc.append(l)
 
-    # Se a captura inteligente falhou, fallback simples
-    if not desc:
-        dados["Descricao"] = "Serviço de Reforma (Descrição não identificada)"
-    else:
-        dados["Descricao"] = "\n".join(desc).strip()
+    if not desc: dados["Descricao"] = "Serviço de Reforma"
+    else: dados["Descricao"] = "\n".join(desc).strip()
 
     return dados
 
@@ -314,7 +280,6 @@ def resumo_por_cliente(df_c, df_o):
     
     o_sort = o.sort_values(["Cliente", "Data_Visita_dt"])
     ult = o_sort.groupby("Cliente", as_index=False).tail(1)[["Cliente", "Status"]]
-    
     mapa_fase = dict(zip(ult["Cliente"].astype(str), ult["Status"].astype(str)))
 
     total = o.groupby("Cliente", as_index=False)["Total"].sum()
@@ -407,36 +372,42 @@ elif menu == "Importar/Exportar":
                 btn_confirmar = st.form_submit_button("💾 CONFIRMAR E SALVAR NO SISTEMA")
                 
                 if btn_confirmar:
+                    # Verifica duplicidade usando STRIP para evitar "Cliente " vs "Cliente"
                     existe_cli = False
+                    imp_clean = imp_cliente.strip()
                     if not df_clientes.empty:
-                         if imp_cliente in df_clientes["Nome"].astype(str).values:
+                         nomes_existentes = df_clientes["Nome"].astype(str).str.strip().values
+                         if imp_clean in nomes_existentes:
                              existe_cli = True
+                    
                     if not existe_cli:
                          novo_id_cli = 1
                          if not df_clientes.empty:
                              try: novo_id_cli = int(df_clientes["ID"].max()) + 1
                              except: pass
                          novo_cliente = pd.DataFrame([{
-                             "ID": novo_id_cli, "Nome": imp_cliente, "Telefone": "", "Email": "", "Endereco": "", 
+                             "ID": novo_id_cli, "Nome": imp_clean, "Telefone": "", "Email": "", "Endereco": "", 
                              "Data_Cadastro": datetime.now().strftime("%Y-%m-%d")
                          }])
                          df_clientes = pd.concat([df_clientes, novo_cliente], ignore_index=True)
-                         st.toast(f"Novo cliente '{imp_cliente}' cadastrado!")
+                         st.toast(f"Novo cliente '{imp_clean}' cadastrado!")
 
                     novo_id_obra = 1
                     if not df_obras.empty:
                         try: novo_id_obra = int(df_obras["ID"].max()) + 1
                         except: pass
+                    
+                    # Salva o total no campo Mão de Obra para não ficar zerado na edição
                     nova_obra = pd.DataFrame([{
-                        "ID": novo_id_obra, "Cliente": imp_cliente, "Status": "🟠 Orçamento Enviado",
+                        "ID": novo_id_obra, "Cliente": imp_clean, "Status": "🟠 Orçamento Enviado",
                         "Data_Orcamento": imp_data, "Data_Visita": imp_data,
                         "Total": imp_total, "Descricao": imp_desc,
-                        "Custo_MO": 0.0, "Custo_Material": 0.0, "Entrada": 0.0, "Pago": False
+                        "Custo_MO": imp_total, "Custo_Material": 0.0, "Entrada": 0.0, "Pago": False
                     }])
                     df_obras = pd.concat([df_obras, nova_obra], ignore_index=True)
                     df_obras = limpar_obras(df_obras)
                     save_data(df_clientes, df_obras)
-                    st.success("✅ Importação concluída! Os dados foram salvos.")
+                    st.success("✅ Importação concluída! Dados salvos e disponíveis na gestão.")
                     st.balloons()
                     del st.session_state["dados_pdf_cache"]
         else: st.error("Não consegui ler dados úteis deste PDF.")
@@ -516,30 +487,51 @@ elif menu == "Gestão de Obras":
     else:
         lista_cli = sorted(df_clientes["Nome"].astype(str).str.strip().unique())
         cli_sel = st.selectbox("Selecione o Cliente", [""] + lista_cli)
+        
         if cli_sel:
             obras_do_cli = df_obras[df_obras["Cliente"].astype(str).str.strip() == cli_sel]
-            if obras_do_cli.empty: st.info("Este cliente não tem obras.")
+            
+            if obras_do_cli.empty: 
+                st.info("Este cliente não tem obras.")
             else:
-                st.caption("Obras encontradas:")
+                st.caption("Histórico de Obras:")
                 show_o = obras_do_cli.copy()
                 show_o["Total"] = show_o["Total"].apply(br_money)
                 st.dataframe(show_o[["ID", "Status", "Data_Visita", "Data_Orcamento", "Total"]], use_container_width=True)
+            
             st.divider()
+            
             with st.expander("➕ Adicionar / Editar Obra", expanded=True):
                 opcoes_obras = ["Nova Obra"]
+                
+                # Prepara o menu. Se tiver obras, já deixa a ÚLTIMA selecionada por padrão
+                idx_selecao = 0 
                 if not obras_do_cli.empty:
-                    opcoes_obras += [f"ID {row['ID']} - {row['Status']}" for _, row in obras_do_cli.iterrows()]
-                obra_selecionada = st.selectbox("Selecione a obra", opcoes_obras)
+                    # Lista de strings para o menu
+                    lista_ids = [f"ID {row['ID']} - {row['Status']}" for _, row in obras_do_cli.iterrows()]
+                    opcoes_obras += lista_ids
+                    # Define o índice padrão para ser o último item da lista (a obra mais recente)
+                    idx_selecao = len(opcoes_obras) - 1
+
+                obra_selecionada = st.selectbox("Selecione a obra para editar:", opcoes_obras, index=idx_selecao)
+                
                 dados_obra = {
                     "ID": None, "Status": "🔵 Agendamento", "Descricao": "", 
                     "Custo_MO": 0.0, "Custo_Material": 0.0, "Entrada": 0.0, "Pago": False,
+                    "Total": 0.0,
                     "Data_Visita": datetime.now().date(), "Data_Orcamento": datetime.now().date()
                 }
+
                 if obra_selecionada != "Nova Obra":
                     id_selecionado = int(obra_selecionada.split("ID ")[1].split(" -")[0])
-                    obra_atual = df_obras[df_obras["ID"] == id_selecionado].iloc[0]
-                    dados_obra = obra_atual.to_dict()
+                    # Busca segura da obra
+                    filtro = df_obras[df_obras["ID"] == id_selecionado]
+                    if not filtro.empty:
+                        dados_obra = filtro.iloc[0].to_dict()
+
+                # Formulário
                 with st.form("form_obra"):
+                    st.caption(f"Editando: {obra_selecionada}")
                     status = st.selectbox("Status", 
                         ["🔵 Agendamento", "🟠 Orçamento Enviado", "🟤 Execução", "🟢 Concluído", "🔴 Cancelado"],
                         index=["🔵 Agendamento", "🟠 Orçamento Enviado", "🟤 Execução", "🟢 Concluído", "🔴 Cancelado"].index(normalize_status(dados_obra["Status"]))
@@ -548,13 +540,25 @@ elif menu == "Gestão de Obras":
                     c1, c2 = st.columns(2)
                     d_visita = c1.date_input("Data Visita", value=pd.to_datetime(dados_obra["Data_Visita"]).date() if pd.notnull(dados_obra["Data_Visita"]) else datetime.now().date())
                     d_orc = c2.date_input("Data Orçamento", value=pd.to_datetime(dados_obra["Data_Orcamento"]).date() if pd.notnull(dados_obra["Data_Orcamento"]) else datetime.now().date())
+                    
                     c3, c4, c5 = st.columns(3)
-                    mo = c3.number_input("Mão de Obra (R$)", value=float(dados_obra["Custo_MO"]), step=10.0)
-                    mat = c4.number_input("Materiais (R$)", value=float(dados_obra["Custo_Material"]), step=10.0)
+                    
+                    # Recuperação inteligente de valores zerados
+                    val_mo = float(dados_obra["Custo_MO"])
+                    val_mat = float(dados_obra["Custo_Material"])
+                    val_tot = float(dados_obra.get("Total", 0.0))
+                    
+                    if val_mo == 0 and val_mat == 0 and val_tot > 0:
+                        val_mo = val_tot
+
+                    mo = c3.number_input("Mão de Obra (R$)", value=val_mo, step=10.0)
+                    mat = c4.number_input("Materiais (R$)", value=val_mat, step=10.0)
                     ent = c5.number_input("Entrada (R$)", value=float(dados_obra["Entrada"]), step=10.0)
                     pago = st.checkbox("Pago Integralmente?", value=bool(dados_obra["Pago"]))
+                    
                     total_calc = mo + mat
                     st.markdown(f"**Total Calculado:** {br_money(total_calc)}")
+                    
                     if st.form_submit_button("Salvar Obra"):
                         novo_id = dados_obra["ID"]
                         if novo_id is None or novo_id == 0: 
@@ -562,17 +566,21 @@ elif menu == "Gestão de Obras":
                              except: novo_id = 1
                         else:
                              df_obras = df_obras[df_obras["ID"] != novo_id]
+                        
                         nova_linha = {
                             "ID": novo_id, "Cliente": cli_sel, "Status": status, "Descricao": desc,
                             "Custo_MO": mo, "Custo_Material": mat, "Total": total_calc,
                             "Entrada": ent, "Pago": pago, "Data_Visita": d_visita, "Data_Orcamento": d_orc
                         }
+                        # Garante colunas
                         for col in df_obras.columns:
                             if col not in nova_linha: nova_linha[col] = None
+                            
                         df_obras = pd.concat([df_obras, pd.DataFrame([nova_linha])], ignore_index=True)
                         save_data(df_clientes, df_obras)
                         st.success("Obra salva com sucesso!")
                         st.rerun()
+            
             st.divider()
             with st.expander("🗑️ Excluir uma Obra"):
                 if obras_do_cli.empty: st.info("Nada para excluir.")
