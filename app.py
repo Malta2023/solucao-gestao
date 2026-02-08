@@ -7,18 +7,19 @@ import datetime
 import pdfplumber
 import re
 
+# --- CONFIGURAÇÃO ---
+st.set_page_config(page_title="Solução Gestor", layout="wide", page_icon="🏗️")
+
+# Botão para limpar a memória
+if st.sidebar.button("🔄 Reiniciar Sistema"):
+    st.cache_data.clear()
+    st.rerun()
+
 # --- DADOS DA EMPRESA ---
 EMP_NOME = "SOLUÇÃO REFORMA E CONSTRUÇÃO"
 EMP_CNPJ = "CNPJ: 46.580.382/0001-70"
 EMP_ENDERECO = "Rua Bandeirantes, 1303, Pedra Mole - Teresina/PI | CEP: 64065-040"
 EMP_CONTATO = "Tel: (86) 9.9813-2225 | Email: solucoesreformaseconstrucao@gmail.com"
-
-# --- CONFIGURAÇÃO ---
-st.set_page_config(page_title="Solução Gestor", layout="wide", page_icon="🏗️")
-
-if st.sidebar.button("🔄 Forçar Atualização"):
-    st.cache_data.clear()
-    st.rerun()
 
 # --- CONEXÃO ---
 def conectar_gsheets():
@@ -30,39 +31,39 @@ def conectar_gsheets():
         return client
     except: return None
 
-# --- CARREGAR DADOS (FORÇA BRUTA) ---
+# --- CARREGAR DADOS (BLINDADO) ---
 def carregar_dados():
     client = conectar_gsheets()
     if client:
         try:
             sheet = client.open("Gestao_Obras").sheet1
-            # Pega todos os valores (lista de listas)
             dados = sheet.get_all_values()
             
-            # Se não tiver dados ou só tiver cabeçalho
             if len(dados) < 2: return pd.DataFrame()
             
-            # Pega a primeira linha como cabeçalho
-            cabecalho = dados[0]
-            linhas = dados[1:]
-            
-            df = pd.DataFrame(linhas, columns=cabecalho)
-            
-            # TRUQUE DE MESTRE: Renomeia as colunas na marra para garantir
-            # Assim, se na planilha estiver "data entrada" (sem maiúscula), ele arruma.
-            nomes_certos = [
+            # Força nomes das colunas
+            colunas_certas = [
                 "ID", "Status", "DataContato", "DataEnvio", "Cliente", 
                 "Telefone", "Endereco", "Descricao", "Observacao", 
                 "Valor", "Pagamento", "DataEntrada", "DataRestante"
             ]
             
-            # Se a quantidade de colunas bater, renomeia
-            if len(df.columns) == len(nomes_certos):
-                df.columns = nomes_certos
+            # Pega dados ignorando o cabeçalho original
+            linhas = dados[1:]
+            df = pd.DataFrame(linhas)
             
+            # Ajusta colunas
+            if len(df.columns) >= 13:
+                df = df.iloc[:, :13]
+                df.columns = colunas_certas
+            else:
+                # Completa colunas que faltam
+                for i in range(13 - len(df.columns)):
+                    df[len(df.columns)] = ""
+                df.columns = colunas_certas
+                
             return df
         except Exception as e:
-            st.error(f"Erro leitura: {e}")
             return pd.DataFrame()
     return pd.DataFrame()
 
@@ -73,18 +74,18 @@ def salvar_obra(dados):
             sheet = client.open("Gestao_Obras").sheet1
             def fmt(d): return d.strftime("%d/%m/%Y") if hasattr(d, 'strftime') else str(d)
             
-            # 13 Colunas Exatas
             row = [
-                dados["ID"], dados["Status"], fmt(dados["DataContato"]), fmt(dados["DataEnvio"]),
-                dados["Cliente"], dados["Telefone"], dados["Endereco"],
-                dados["Descricao"], dados["Observacao"], dados["Valor"], dados["Pagamento"],
+                str(dados["ID"]), str(dados["Status"]), fmt(dados["DataContato"]), fmt(dados["DataEnvio"]),
+                str(dados["Cliente"]), str(dados["Telefone"]), str(dados["Endereco"]),
+                str(dados["Descricao"]), str(dados["Observacao"]), 
+                str(dados["Valor"]), str(dados["Pagamento"]),
                 fmt(dados["DataEntrada"]), fmt(dados["DataRestante"])
             ]
             sheet.append_row(row)
-            st.toast("✅ Salvo!", icon="💾")
+            st.toast("✅ Salvo com sucesso!", icon="💾")
             return True
         except Exception as e:
-            st.error(f"Erro salvar: {e}")
+            st.error(f"Erro ao salvar: {e}")
             return False
     return False
 
@@ -136,7 +137,8 @@ def gerar_pdf_orcamento(obra):
         pdf.ln(5)
     pdf.ln(5)
     pdf.set_font("Arial", 'B', 14)
-    pdf.cell(0, 12, f"TOTAL: R$ {obra['ValorTotal']}", 1, 1, 'R')
+    # CORREÇÃO AQUI: Mudado de ValorTotal para Valor
+    pdf.cell(0, 12, f"TOTAL: R$ {obra['Valor']}", 1, 1, 'R')
     return pdf.output(dest='S').encode('latin-1')
 
 def gerar_pdf_recibo(obra):
@@ -147,7 +149,8 @@ def gerar_pdf_recibo(obra):
     pdf.cell(0, 15, 'RECIBO', 0, 1, 'C')
     pdf.ln(10)
     pdf.set_font('Arial', '', 12)
-    texto = f"Recebemos de {obra['Cliente']}\n R$ {obra['ValorTotal']}\nReferente a: {obra['Endereco']}.\nTeresina, {datetime.date.today().strftime('%d/%m/%Y')}"
+    # CORREÇÃO AQUI TAMBÉM
+    texto = f"Recebemos de {obra['Cliente']}\n R$ {obra['Valor']}\nReferente a: {obra['Endereco']}.\nTeresina, {datetime.date.today().strftime('%d/%m/%Y')}"
     pdf.multi_cell(0, 9, texto, border=1, align='C')
     pdf.ln(30)
     pdf.cell(0, 5, "_______________________", 0, 1, 'C')
@@ -176,7 +179,6 @@ if menu == "Dashboard":
     st.title("📊 Painel")
     df = carregar_dados()
     if not df.empty:
-        # Tenta pegar as datas. Se der erro, ignora (não mostra aviso vermelho)
         try:
             hoje = datetime.date.today().strftime("%d/%m/%Y")
             avisos = []
@@ -249,11 +251,13 @@ elif menu == "Gerenciar":
     st.title("📂 Obras")
     df = carregar_dados()
     if not df.empty:
-        st.dataframe(df)
+        # CORREÇÃO: ValorTotal -> Valor
+        cols = [c for c in ['Status', 'Cliente', 'Valor', 'DataEnvio'] if c in df.columns]
+        st.dataframe(df[cols])
+        
         sel = st.selectbox("Cliente:", df['Cliente'].unique())
         if sel:
             obra = df[df['Cliente'] == sel].iloc[-1]
             c1,c2 = st.columns(2)
             with c1: st.download_button("Orçamento PDF", gerar_pdf_orcamento(obra), f"Orc_{sel}.pdf")
             with c2: st.download_button("Recibo PDF", gerar_pdf_recibo(obra), f"Rec_{sel}.pdf")
-
