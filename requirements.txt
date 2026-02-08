@@ -1,10 +1,10 @@
 streamlit
 pandas
 fpdf
-pdfplumber
 gspread
 oauth2client
-PyOpenSSL
+pdfplumber
+
 
 
 
