@@ -10,12 +10,11 @@ import re
 # --- CONFIGURAÇÃO ---
 st.set_page_config(page_title="Solução Gestor", layout="wide", page_icon="🏗️")
 
-# Botão para limpar a memória
-if st.sidebar.button("🔄 Reiniciar Sistema"):
+if st.sidebar.button("🔄 Atualizar"):
     st.cache_data.clear()
     st.rerun()
 
-# --- DADOS DA EMPRESA ---
+# --- DADOS ---
 EMP_NOME = "SOLUÇÃO REFORMA E CONSTRUÇÃO"
 EMP_CNPJ = "CNPJ: 46.580.382/0001-70"
 EMP_ENDERECO = "Rua Bandeirantes, 1303, Pedra Mole - Teresina/PI | CEP: 64065-040"
@@ -31,40 +30,32 @@ def conectar_gsheets():
         return client
     except: return None
 
-# --- CARREGAR DADOS (BLINDADO) ---
+# --- CARREGAR DADOS ---
 def carregar_dados():
     client = conectar_gsheets()
     if client:
         try:
             sheet = client.open("Gestao_Obras").sheet1
             dados = sheet.get_all_values()
-            
             if len(dados) < 2: return pd.DataFrame()
             
-            # Força nomes das colunas
-            colunas_certas = [
-                "ID", "Status", "DataContato", "DataEnvio", "Cliente", 
-                "Telefone", "Endereco", "Descricao", "Observacao", 
-                "Valor", "Pagamento", "DataEntrada", "DataRestante"
-            ]
+            # Força nomes das 13 colunas
+            cols = ["ID", "Status", "DataContato", "DataEnvio", "Cliente", "Telefone", 
+                    "Endereco", "Descricao", "Observacao", "Valor", "Pagamento", 
+                    "DataEntrada", "DataRestante"]
             
-            # Pega dados ignorando o cabeçalho original
             linhas = dados[1:]
             df = pd.DataFrame(linhas)
             
-            # Ajusta colunas
+            # Ajusta tamanho
             if len(df.columns) >= 13:
                 df = df.iloc[:, :13]
-                df.columns = colunas_certas
+                df.columns = cols
             else:
-                # Completa colunas que faltam
-                for i in range(13 - len(df.columns)):
-                    df[len(df.columns)] = ""
-                df.columns = colunas_certas
-                
+                for i in range(13 - len(df.columns)): df[len(df.columns)] = ""
+                df.columns = cols
             return df
-        except Exception as e:
-            return pd.DataFrame()
+        except: return pd.DataFrame()
     return pd.DataFrame()
 
 def salvar_obra(dados):
@@ -73,19 +64,17 @@ def salvar_obra(dados):
         try:
             sheet = client.open("Gestao_Obras").sheet1
             def fmt(d): return d.strftime("%d/%m/%Y") if hasattr(d, 'strftime') else str(d)
-            
             row = [
                 str(dados["ID"]), str(dados["Status"]), fmt(dados["DataContato"]), fmt(dados["DataEnvio"]),
                 str(dados["Cliente"]), str(dados["Telefone"]), str(dados["Endereco"]),
-                str(dados["Descricao"]), str(dados["Observacao"]), 
-                str(dados["Valor"]), str(dados["Pagamento"]),
-                fmt(dados["DataEntrada"]), fmt(dados["DataRestante"])
+                str(dados["Descricao"]), str(dados["Observacao"]), str(dados["Valor"]), 
+                str(dados["Pagamento"]), fmt(dados["DataEntrada"]), fmt(dados["DataRestante"])
             ]
             sheet.append_row(row)
-            st.toast("✅ Salvo com sucesso!", icon="💾")
+            st.toast("✅ Salvo!", icon="💾")
             return True
-        except Exception as e:
-            st.error(f"Erro ao salvar: {e}")
+        except: 
+            st.error("Erro ao salvar.")
             return False
     return False
 
@@ -106,12 +95,13 @@ class PDF(FPDF):
         self.set_font('Arial', 'I', 7)
         self.cell(0, 10, 'Documento Oficial', 0, 0, 'C')
 
-def gerar_pdf_orcamento(obra):
+def gerar_orcamento(obra):
     pdf = PDF()
     pdf.add_page()
     pdf.set_font('Arial', 'B', 16)
     pdf.cell(0, 10, 'ORÇAMENTO', 0, 1, 'C')
     pdf.ln(5)
+    
     pdf.set_fill_color(240,240,240)
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(0, 8, " DADOS DO CLIENTE", 0, 1, 'L', 1)
@@ -122,12 +112,14 @@ def gerar_pdf_orcamento(obra):
     pdf.cell(0, 6, f"Telefone: {obra['Telefone']}", 0, 1)
     pdf.cell(0, 6, f"Endereço: {obra['Endereco']}", 0, 1)
     pdf.ln(5)
+    
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(0, 8, " DESCRIÇÃO", 0, 1, 'L', 1)
     pdf.ln(2)
     pdf.set_font("Arial", size=10)
     pdf.multi_cell(0, 6, str(obra['Descricao']))
     pdf.ln(5)
+    
     if str(obra['Observacao']).strip():
         pdf.set_font("Arial", 'B', 10)
         pdf.cell(0, 8, " OBSERVAÇÕES", 0, 1, 'L', 1)
@@ -135,13 +127,13 @@ def gerar_pdf_orcamento(obra):
         pdf.set_font("Arial", size=9)
         pdf.multi_cell(0, 5, str(obra['Observacao']))
         pdf.ln(5)
+    
     pdf.ln(5)
     pdf.set_font("Arial", 'B', 14)
-    # CORREÇÃO AQUI: Mudado de ValorTotal para Valor
     pdf.cell(0, 12, f"TOTAL: R$ {obra['Valor']}", 1, 1, 'R')
     return pdf.output(dest='S').encode('latin-1')
 
-def gerar_pdf_recibo(obra):
+def gerar_recibo(obra):
     pdf = PDF()
     pdf.add_page()
     pdf.ln(10)
@@ -149,7 +141,6 @@ def gerar_pdf_recibo(obra):
     pdf.cell(0, 15, 'RECIBO', 0, 1, 'C')
     pdf.ln(10)
     pdf.set_font('Arial', '', 12)
-    # CORREÇÃO AQUI TAMBÉM
     texto = f"Recebemos de {obra['Cliente']}\n R$ {obra['Valor']}\nReferente a: {obra['Endereco']}.\nTeresina, {datetime.date.today().strftime('%d/%m/%Y')}"
     pdf.multi_cell(0, 9, texto, border=1, align='C')
     pdf.ln(30)
@@ -157,54 +148,55 @@ def gerar_pdf_recibo(obra):
     pdf.cell(0, 5, EMP_NOME, 0, 1, 'C')
     return pdf.output(dest='S').encode('latin-1')
 
-def ler_pdf(arquivo):
+def ler_pdf(arq):
     texto = ""
-    with pdfplumber.open(arquivo) as pdf:
+    with pdfplumber.open(arq) as pdf:
         for p in pdf.pages: texto += p.extract_text() + "\n"
-    dados = {"Cliente": "", "Telefone": "", "Endereco": "", "Valor": 0.0, "Descricao": texto}
+    d = {"Cliente":"", "Telefone":"", "Endereco":"", "Valor":0.0, "Descricao":texto}
     for l in texto.split('\n'):
-        if "cliente:" in l.lower(): dados["Cliente"] = l.split(":",1)[1].strip()
-        elif "total:" in l.lower():
-            try: dados["Valor"] = float(re.findall(r'[\d.,]+', l)[-1].replace('.','').replace(',','.'))
+        low = l.lower()
+        if "cliente:" in low: d["Cliente"] = l.split(":",1)[1].strip()
+        elif "total:" in low:
+            try: d["Valor"] = float(re.findall(r'[\d.,]+', l)[-1].replace('.','').replace(',','.'))
             except: pass
-    return dados
+    return d
 
 # --- INTERFACE ---
 if 'dados_imp' not in st.session_state: st.session_state['dados_imp'] = {}
 
 st.sidebar.title("Solução Gestor")
-menu = st.sidebar.radio("Navegação", ["Dashboard", "Novo Orçamento", "Gerenciar"])
+menu = st.sidebar.radio("Menu", ["Dashboard", "Novo Orçamento", "Gerenciar"])
 
 if menu == "Dashboard":
     st.title("📊 Painel")
     df = carregar_dados()
     if not df.empty:
-        try:
-            hoje = datetime.date.today().strftime("%d/%m/%Y")
-            avisos = []
-            if 'DataEntrada' in df.columns:
-                for i, r in df.iterrows():
-                    if str(r['DataEntrada']) == hoje: avisos.append(f"💰 Entrada: {r['Cliente']}")
-            if avisos:
-                for a in avisos: st.warning(a)
-            else: st.success("Agenda Livre Hoje")
-        except: pass
+        # Agenda
+        hj = datetime.date.today().strftime("%d/%m/%Y")
+        avisos = []
+        if 'DataEntrada' in df.columns:
+            for i,r in df.iterrows():
+                if str(r['DataEntrada']) == hj: avisos.append(f"💰 Entrada: {r['Cliente']}")
+        if avisos: 
+            for a in avisos: st.warning(a)
+        else: st.success("Agenda Livre")
         
         st.write("---")
+        # Status (CORREÇÃO AQUI: st.primary não existe, troquei por st.info)
         if 'Status' in df.columns:
             c1, c2, c3, c4 = st.columns(4)
             with c1: 
-                st.info("📞 Contato")
-                for i,r in df[df['Status']=='Contato'].iterrows(): st.write(f"- {r['Cliente']}")
+                st.info("📞 **Contato**")
+                for i,r in df[df['Status']=='Contato'].iterrows(): st.write(f"{r['Cliente']}")
             with c2: 
-                st.warning("📐 Visita")
-                for i,r in df[df['Status']=='Visita'].iterrows(): st.write(f"- {r['Cliente']}")
+                st.warning("📐 **Visita**")
+                for i,r in df[df['Status']=='Visita'].iterrows(): st.write(f"{r['Cliente']}")
             with c3: 
-                st.primary("📝 Orçamento")
-                for i,r in df[df['Status']=='Orçamento'].iterrows(): st.write(f"- {r['Cliente']}")
+                st.error("📝 **Orçamento**") # Usei st.error (vermelho) pra destacar
+                for i,r in df[df['Status']=='Orçamento'].iterrows(): st.write(f"{r['Cliente']}")
             with c4: 
-                st.success("✅ Fechado")
-                for i,r in df[df['Status']=='Fechado'].iterrows(): st.write(f"- {r['Cliente']}")
+                st.success("✅ **Fechado**")
+                for i,r in df[df['Status']=='Fechado'].iterrows(): st.write(f"{r['Cliente']}")
     else: st.info("Sem dados.")
 
 elif menu == "Novo Orçamento":
@@ -251,13 +243,11 @@ elif menu == "Gerenciar":
     st.title("📂 Obras")
     df = carregar_dados()
     if not df.empty:
-        # CORREÇÃO: ValorTotal -> Valor
         cols = [c for c in ['Status', 'Cliente', 'Valor', 'DataEnvio'] if c in df.columns]
         st.dataframe(df[cols])
-        
         sel = st.selectbox("Cliente:", df['Cliente'].unique())
         if sel:
             obra = df[df['Cliente'] == sel].iloc[-1]
             c1,c2 = st.columns(2)
-            with c1: st.download_button("Orçamento PDF", gerar_pdf_orcamento(obra), f"Orc_{sel}.pdf")
-            with c2: st.download_button("Recibo PDF", gerar_pdf_recibo(obra), f"Rec_{sel}.pdf")
+            with c1: st.download_button("Orçamento", gerar_orcamento(obra), f"Orc_{sel}.pdf")
+            with c2: st.download_button("Recibo", gerar_recibo(obra), f"Rec_{sel}.pdf")
